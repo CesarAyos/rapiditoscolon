@@ -1,160 +1,248 @@
-<script>
+<script lang="ts">
 	import { supabase } from '../../components/supabase';
 	import { goto } from '$app/navigation';
-
+	
+	// Definimos tipos para nuestros datos
+	type ConductorData = {
+	  id?: string;
+	  nombre: string;
+	  placa: string;
+	  licencia: string;
+	  propiedad: string;
+	  control: string;
+	  marca: string;
+	  email: string;
+	  acepta_terminos: boolean;
+	  created_at?: string;
+	};
+  
 	let nombre = '';
 	let password = '';
 	let placa = '';
 	let licencia = '';
 	let propiedad = '';
 	let control = '';
+	let email = '';
 	let marca = '';
 	let aceptaTerminos = false;
 	let showPassword = false;
-
+	let errorMessage = '';
+	let isLoading = false;
+	
 	function togglePassword() {
-		showPassword = !showPassword;
+	  showPassword = !showPassword;
 	}
-
+	
 	async function handleSubmit() {
-		const data = {
-			nombre: nombre,
-			password: password,
-			placa: placa,
-			licencia: licencia,
-			propiedad: propiedad,
-			control: control,
-			marca: marca,
-			acepta_terminos: aceptaTerminos
+	  // Validaciones
+	  if (!aceptaTerminos) {
+		errorMessage = 'Debes aceptar los términos y condiciones';
+		return;
+	  }
+  
+	  if (password.length < 8) {
+		errorMessage = 'La contraseña debe tener al menos 8 caracteres';
+		return;
+	  }
+  
+	  isLoading = true;
+	  errorMessage = '';
+	  
+	  try {
+		// 1. Registrar usuario en auth
+		const { data: authData, error: authError } = await supabase.auth.signUp({
+		  email: email,
+		  password: password,
+		  options: {
+			data: {
+			  name: nombre,
+			  role: 'conductor'
+			}
+		  }
+		});
+  
+		if (authError) throw authError;
+		if (!authData.user) throw new Error('No se pudo crear el usuario');
+  
+		// 2. Insertar datos en tabla conductor
+		const conductorData: ConductorData = {
+		  nombre: nombre.trim(),
+		  placa: placa.trim().toUpperCase(),
+		  licencia: licencia.trim(),
+		  propiedad: propiedad,
+		  control: control.toString().trim(),
+		  marca: marca.trim(),
+		  email: email.toLowerCase().trim(),
+		  acepta_terminos: aceptaTerminos,
+		  created_at: new Date().toISOString()
 		};
-
-		const { error } = await supabase.from('conductor').insert([data]);
-
-		if (error) {
-			console.error('Error al insertar los datos:', error.message);
-			alert('Hubo un error al enviar el formulario. Intenta de nuevo.');
+  
+		const { error: dbError } = await supabase
+		  .from('conductor')
+		  .insert(conductorData);
+  
+		if (dbError) throw dbError;
+  
+		// 3. Redirigir
+		goto('/auth');
+  
+	  } catch (error: unknown) {
+		// Manejo seguro del error
+		if (error instanceof Error) {
+		  errorMessage = error.message;
+		  
+		  // Mensajes específicos para errores conocidos
+		  if (error.message.includes('User already registered')) {
+			errorMessage = 'Este email ya está registrado';
+		  } else if (error.message.includes('password')) {
+			errorMessage = 'La contraseña no cumple los requisitos';
+		  }
 		} else {
-			alert('Formulario enviado con éxito y datos insertados en la base de datos.');
-			// Redireccionar usando SvelteKit
-			goto('/auth');
+		  errorMessage = 'Ocurrió un error inesperado';
 		}
+		
+		console.error('Error en registro:', error);
+	  } finally {
+		isLoading = false;
+	  }
 	}
-</script>
-
-<div class="wrapper">
+  </script>
+  
+  <div class="wrapper">
 	<div class="scroll-container">
-		<div class="container animate-fall">
-			<div class="container text-center p-5 rounded">
-				<h1 class="title">Registro de Conductores</h1>
-				<p class="subtitle">Completa tus datos para comenzar</p>
-
-				<form on:submit|preventDefault={handleSubmit} class="driver-form">
-					<!-- Campos del formulario -->
-					<div class="form-group">
-						<label for="nombre">Nombre completo</label>
-						<input
-							id="nombre"
-							type="text"
-							bind:value={nombre}
-							placeholder="Ej: Juan Pérez"
-							required
-						/>
-						<div class="underline"></div>
-					</div>
-
-					<div class="form-group">
-						<label for="control">Número de control</label>
-						<input
-							id="control"
-							type="number"
-							bind:value={control}
-							placeholder="Ej: 12345"
-							required
-						/>
-						<div class="underline"></div>
-					</div>
-
-					<div class="form-group">
-						<label for="marca">Marca y modelo</label>
-						<input
-							id="marca"
-							type="text"
-							bind:value={marca}
-							placeholder="Ej: Toyota Corolla 2020"
-							required
-						/>
-						<div class="underline"></div>
-					</div>
-
-					<div class="form-group">
-						<label for="propiedad">Tipo de conductor</label>
-						<select id="propiedad" class="text-dark" bind:value={propiedad} required>
-							<option value="" disabled selected>Selecciona</option>
-							<option value="socio">Socio</option>
-							<option value="avance">Avance</option>
-						</select>
-						<div class="underline"></div>
-					</div>
-
-					<div class="form-group">
-						<label for="placa">Placa del vehículo</label>
-						<input id="placa" type="text" bind:value={placa} placeholder="Ej: ABC-123" required />
-						<div class="underline"></div>
-					</div>
-
-					<div class="form-group">
-						<label for="licencia">Número de licencia</label>
-						<input
-							id="licencia"
-							type="text"
-							bind:value={licencia}
-							placeholder="Ej: 123456789"
-							required
-						/>
-						<div class="underline"></div>
-					</div>
-
-					<div class="form-row">
-						<div class="form-group half-width">
-							<label for="password">Contraseña</label>
-							<div class="password-input">
-								<input
-									id="password"
-									type={showPassword ? 'text' : 'password'}
-									bind:value={password}
-									placeholder="Mínimo 8 caracteres"
-									minlength="8"
-									required
-								/>
-								<button type="button" class="toggle-password" on:click={togglePassword}>
-									{showPassword ? '🙈' : '👁️'}
-								</button>
-							</div>
-							<div class="underline"></div>
-						</div>
-
-						<div class="form-check">
-							<input id="terminos" type="checkbox" bind:checked={aceptaTerminos} required />
-							<label for="terminos">Acepto los términos y condiciones</label>
-						</div>
-
-						<button type="submit" class="btn-submit" disabled={!aceptaTerminos}>
-							<span class="btn-icon">🚗</span>
-							<span>Registrarme como conductor</span>
-						</button>
-					</div>
-				</form>
-
-				<!-- Elementos decorativos -->
-				<div class="floating-elements">
-					<div class="circle circle-1"></div>
-					<div class="circle circle-2"></div>
-					<div class="circle circle-3"></div>
-				</div>
+	  <div class="container animate-fall">
+		<div class="container text-center p-5 rounded">
+		  <h1 class="title">Registro de Conductores</h1>
+		  <p class="subtitle">Completa tus datos para comenzar</p>
+  
+		  {#if errorMessage}
+			<div class="alert alert-danger mb-4">
+			  {errorMessage}
 			</div>
+		  {/if}
+  
+		  <form on:submit|preventDefault={handleSubmit} class="driver-form">
+			<!-- Campos del formulario -->
+			<div class="form-group">
+			  <label for="nombre">Nombre completo</label>
+			  <input
+				id="nombre"
+				type="text"
+				bind:value={nombre}
+				placeholder="Ej: Juan Pérez"
+				required
+			  />
+			  <div class="underline"></div>
+			</div>
+  
+			<div class="form-group">
+			  <label for="control">Número de control</label>
+			  <input
+				id="control"
+				type="number"
+				bind:value={control}
+				placeholder="Ej: 12345"
+				required
+			  />
+			  <div class="underline"></div>
+			</div>
+  
+			<div class="form-group">
+			  <label for="marca">Marca y modelo</label>
+			  <input
+				id="marca"
+				type="text"
+				bind:value={marca}
+				placeholder="Ej: Toyota Corolla 2020"
+				required
+			  />
+			  <div class="underline"></div>
+			</div>
+  
+			<div class="form-group">
+			  <label for="propiedad">Tipo de conductor</label>
+			  <select id="propiedad" class="text-dark" bind:value={propiedad} required>
+				<option value="" disabled selected>Selecciona</option>
+				<option value="socio">Socio</option>
+				<option value="avance">Avance</option>
+			  </select>
+			  <div class="underline"></div>
+			</div>
+  
+			<div class="form-group">
+			  <label for="placa">Placa del vehículo</label>
+			  <input id="placa" type="text" bind:value={placa} placeholder="Ej: ABC-123" required />
+			  <div class="underline"></div>
+			</div>
+  
+			<div class="form-group">
+			  <label for="licencia">Número de licencia</label>
+			  <input
+				id="licencia"
+				type="text"
+				bind:value={licencia}
+				placeholder="Ej: 123456789"
+				required
+			  />
+			  <div class="underline"></div>
+			</div>
+  
+			<div class="form-group">
+			  <label for="email">Correo electrónico</label>
+			  <input
+				id="email"
+				type="email"
+				bind:value={email}
+				placeholder="Ej: ejemplo@gmail.com"
+				required
+			  />
+			  <div class="underline"></div>
+			</div>
+  
+			<div class="form-group">
+			  <label for="password">Contraseña</label>
+			  <div class="password-input">
+				<input
+				  id="password"
+				  type={showPassword ? 'text' : 'password'}
+				  bind:value={password}
+				  placeholder="Mínimo 8 caracteres"
+				  minlength="8"
+				  required
+				/>
+				<button type="button" class="toggle-password" on:click={togglePassword}>
+				  {showPassword ? '🙈' : '👁️'}
+				</button>
+			  </div>
+			  <div class="underline"></div>
+			</div>
+  
+			<div class="form-check">
+			  <input id="terminos" type="checkbox" bind:checked={aceptaTerminos} required />
+			  <label for="terminos">Acepto los términos y condiciones</label>
+			</div>
+  
+			<button type="submit" class="btn-submit" disabled={!aceptaTerminos || isLoading}>
+			  {#if isLoading}
+				<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+				Procesando...
+			  {:else}
+				<span class="btn-icon">🚗</span>
+				<span>Registrarme como conductor</span>
+			  {/if}
+			</button>
+		  </form>
+  
+		  <!-- Elementos decorativos -->
+		  <div class="floating-elements">
+			<div class="circle circle-1"></div>
+			<div class="circle circle-2"></div>
+			<div class="circle circle-3"></div>
+		  </div>
 		</div>
+	  </div>
 	</div>
-</div>
+  </div>
 
 <style>
 	/* === ESTILOS GLOBALES (igual que tu pantalla de inicio) === */

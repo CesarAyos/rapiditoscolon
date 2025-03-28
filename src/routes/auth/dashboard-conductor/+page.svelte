@@ -1,364 +1,300 @@
-<script>
+<script lang="ts">
+  import { supabase } from "../../../components/supabase";
+  import { onMount } from 'svelte';
+  import { writable } from 'svelte/store';
 	import Lock from "../../../components/lock.svelte";
+  
 
-
-  // Datos del conductor
-  let conductor = {
-    nombre: "Carlos Mendoza",
-    rating: 4.8,
-    viajes: 124,
-    vehiculo: "Toyota Corolla 2022",
-    placa: "ABC-123"
+  // Tipos
+  type Conductor = {
+    id: number;
+    created_at?: string;
+    nombre: string;
+    placa: string;
+    email: string;
+    telefono?: string | null;
   };
 
-  // Viajes programados
-  let viajes = [
-    { id: 1, pasajero: "Ana López", hora: "08:30 AM", destino: "Aeropuerto", estado: "confirmado" },
-    { id: 2, pasajero: "Juan Pérez", hora: "11:15 AM", destino: "Centro Comercial", estado: "pendiente" },
-    { id: 3, pasajero: "María García", hora: "03:45 PM", destino: "Estación Central", estado: "confirmado" }
-  ];
+  type EstadoConductor = {
+    id: number;
+    created_at?: string;
+    conductor_id: number;
+    estado: string;
+    descripcion?: string | null;
+  };
 
-  // Estado del conductor
-  let disponible = true;
-  let ubicacionActual = "Av. Principal #456";
+  type Database = {
+    public: {
+      Tables: {
+        conductor: {
+          Row: Conductor;
+          Insert: Omit<Conductor, 'id' | 'created_at'>;
+          Update: Partial<Omit<Conductor, 'id'>>;
+        };
+        estado_conductor: {
+          Row: EstadoConductor;
+          Insert: Omit<EstadoConductor, 'id' | 'created_at'>;
+          Update: Partial<Omit<EstadoConductor, 'id'>>;
+        };
+      };
+    };
+  };
 
-  function toggleDisponibilidad() {
-    disponible = !disponible;
-  }
+  // Stores
+  const conductor = writable<Conductor | null>(null);
+  const estadoActual = writable<string>("Descanso");
+  const error = writable<string>("");
+  const isLoading = writable<boolean>(false);
+  const session = writable<any>(null);
+
+  // Variables reactivas
+  let conductorData: Conductor | null = null;
+  let currentEstado: string = "Descanso";
+  let errorMessage: string = "";
+  let loading: boolean = false;
+  let currentSession: any = null;
+
+  // Suscripciones
+  conductor.subscribe(value => conductorData = value);
+  estadoActual.subscribe(value => currentEstado = value);
+  error.subscribe(value => errorMessage = value);
+  isLoading.subscribe(value => loading = value);
+  session.subscribe(value => currentSession = value);
+
+  // Obtener sesión activa
+  const getSession = async () => {
+    const { data, error } = await supabase.auth.getSession();
+    if (error) {
+      console.error("Error obteniendo sesión:", error);
+      return null;
+    }
+    session.set(data.session);
+    return data.session;
+  };
+
+  // Obtener conductor basado en el email del usuario autenticado
+  const obtenerConductor = async () => {
+    isLoading.set(true);
+    try {
+      const session = await getSession();
+      if (!session?.user?.email) {
+        throw new Error("No hay usuario autenticado");
+      }
+
+      const { data, error: sbError } = await supabase
+        .from('conductor')
+        .select('*')
+        .eq('email', session.user.email)
+        .single();
+
+      if (sbError) throw sbError;
+      if (!data) throw new Error("Conductor no encontrado");
+
+      conductor.set(data);
+      await obtenerUltimoEstado(data.id);
+    } catch (err) {
+      error.set(err instanceof Error ? err.message : String(err));
+    } finally {
+      isLoading.set(false);
+    }
+  };
+
+  // Obtener último estado (se mantiene igual)
+  const obtenerUltimoEstado = async (conductorId: number) => {
+    try {
+      const { data, error: sbError } = await supabase
+        .from('estado_conductor')
+        .select('*')
+        .eq('conductor_id', conductorId)
+        .order('created_at', { ascending: false })
+        .limit(1);
+
+      if (sbError) throw sbError;
+      if (data?.[0]?.estado) {
+        estadoActual.set(data[0].estado);
+      }
+    } catch (err) {
+      error.set("Error obteniendo estado actual");
+      console.error(err);
+    }
+  };
+
+  // Cambiar estado (se mantiene igual)
+  const cambiarEstado = async (nuevoEstado: string, descripcion: string = "") => {
+    if (!conductorData) {
+      error.set("No hay datos del conductor");
+      return;
+    }
+
+    isLoading.set(true);
+    try {
+      const { error: sbError } = await supabase
+        .from('estado_conductor')
+        .insert({
+          conductor_id: conductorData.id,
+          estado: nuevoEstado,
+          descripcion: descripcion || null
+        });
+
+      if (sbError) throw sbError;
+
+      estadoActual.set(nuevoEstado);
+      error.set(`Estado actualizado: ${nuevoEstado}`);
+      setTimeout(() => error.set(""), 3000);
+    } catch (err) {
+      error.set("Error cambiando estado");
+      console.error(err);
+    } finally {
+      isLoading.set(false);
+    }
+  };
+
+  // Inicialización
+  onMount(async () => {
+    await getSession();
+    await obtenerConductor();
+    
+    // Escuchar cambios en la autenticación
+    supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_IN') {
+        obtenerConductor();
+      } else if (event === 'SIGNED_OUT') {
+        conductor.set(null);
+        estadoActual.set("Descanso");
+      }
+    });
+  });
 </script>
 
 <Lock />
 
-<div class="wrapper">
-  <div class="dashboard-container">
-    <!-- Header -->
-    <header class="dashboard-header">
-      <h1>👋 Hola, {conductor.nombre.split(" ")[0]}</h1>
-      <div class="status-badge {disponible ? 'available' : 'busy'}">
-        {disponible ? 'Disponible' : 'En viaje'}
-      </div>
-    </header>
-
-    <!-- Estadísticas -->
-    <div class="stats-grid">
-      <div class="stat-card">
-        <div class="stat-icon">⭐</div>
-        <div class="stat-value">{conductor.rating}</div>
-        <div class="stat-label">Rating</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-icon">🚕</div>
-        <div class="stat-value">{conductor.viajes}</div>
-        <div class="stat-label">Viajes</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-icon">📱</div>
-        <div class="stat-value">24</div>
-        <div class="stat-label">Solicitudes</div>
-      </div>
+<div class="dashboard">
+  {#if loading}
+    <div class="loading-indicator">Cargando...</div>
+  {:else if conductorData}
+    <div class="header">
+      <h1>Bienvenido, {conductorData.nombre}</h1>
+      <p>Placa: {conductorData.placa}</p>
+      <p>Email: {conductorData.email}</p>
+      {#if conductorData.telefono}
+        <p>Teléfono: {conductorData.telefono}</p>
+      {/if}
     </div>
 
-    <!-- Control de disponibilidad -->
-    <div class="control-panel">
-      <button 
-        class="toggle-button {disponible ? 'active' : ''}" 
-        on:click={toggleDisponibilidad}
-      >
-        {disponible ? '🔛 Disponible' : '⛔ Ocupado'}
+    <div class="current-state">
+      <h2>Estado Actual: {currentEstado}</h2>
+    </div>
+
+    <div class="actions">
+      <button on:click={() => cambiarEstado('En servicio')} class="btn service">
+        En Servicio
       </button>
-      <div class="location">
-        📍 {ubicacionActual}
-      </div>
+      <button on:click={() => cambiarEstado('Descanso')} class="btn rest">
+        Descanso
+      </button>
+      <button 
+        on:click={() => cambiarEstado('En ruta', 'Ruta: Colón → Ureña')} 
+        class="btn route">
+        Colón → Ureña
+      </button>
+      <button 
+        on:click={() => cambiarEstado('En ruta', 'Ruta: Ureña → Colón')} 
+        class="btn route">
+        Ureña → Colón
+      </button>
+      <button on:click={() => cambiarEstado('Accidentado')} class="btn accident">
+        Accidentado
+      </button>
     </div>
-
-    <!-- Lista de viajes -->
-    <div class="section-title">
-      <h2>🚦 Viajes Programados</h2>
-      <span class="badge">{viajes.length}</span>
+  {:else}
+    <div class="no-driver">
+      No se encontraron datos del conductor
     </div>
+  {/if}
 
-    <div class="trips-list">
-      {#each viajes as viaje}
-        <div class="trip-card {viaje.estado}">
-          <div class="trip-time">{viaje.hora}</div>
-          <div class="trip-details">
-            <h3>{viaje.pasajero}</h3>
-            <p>{viaje.destino}</p>
-          </div>
-          <div class="trip-status">
-            {#if viaje.estado === 'confirmado'}
-              ✅ Confirmado
-            {:else}
-              ⏳ Pendiente
-            {/if}
-          </div>
-        </div>
-      {/each}
+  {#if errorMessage}
+    <div class="notification {errorMessage.includes('actualizado') ? 'success' : 'error'}">
+      {errorMessage}
     </div>
-
-    <!-- Menú inferior -->
-    <nav class="bottom-nav">
-      <a href="#" class="nav-item active">🏠 Inicio</a>
-      <a href="#" class="nav-item">📅 Agenda</a>
-      <a href="#" class="nav-item">💬 Mensajes</a>
-      <a href="#" class="nav-item">👤 Perfil</a>
-    </nav>
-  </div>
+  {/if}
 </div>
 
 <style>
-  /* ================ ESTILOS DASHBOARD CONDUCTOR ================ */
-  .dashboard-container {
-    background: rgba(255, 255, 255, 0.15);
-    backdrop-filter: blur(12px);
-    border-radius: 20px;
-    padding: 1.5rem;
-    max-width: 500px;
-    margin: 1rem auto;
-    box-shadow: 0 8px 32px rgba(31, 38, 135, 0.1);
+  .dashboard {
+    max-width: 600px;
+    margin: 0 auto;
+    padding: 20px;
+    font-family: 'Arial', sans-serif;
   }
 
-  .dashboard-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 1.5rem;
-  }
-
-  .dashboard-header h1 {
-    margin: 0;
-    color: white;
-    font-size: 1.8rem;
-  }
-
-  .status-badge {
-    padding: 6px 12px;
-    border-radius: 20px;
-    font-size: 0.9rem;
-    font-weight: 500;
-  }
-
-  .status-badge.available {
-    background: rgba(40, 167, 69, 0.2);
-    color: #28a745;
-    border: 1px solid #28a745;
-  }
-
-  .status-badge.busy {
-    background: rgba(220, 53, 69, 0.2);
-    color: #dc3545;
-    border: 1px solid #dc3545;
-  }
-
-  .stats-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 1rem;
-    margin-bottom: 1.5rem;
-  }
-
-  .stat-card {
-    background: rgba(255, 255, 255, 0.1);
-    border-radius: 12px;
-    padding: 1rem;
+  .header {
     text-align: center;
-    transition: transform 0.3s;
+    margin-bottom: 30px;
+    padding: 20px;
+    background: #f5f5f5;
+    border-radius: 8px;
   }
 
-  .stat-card:hover {
-    transform: translateY(-5px);
-    background: rgba(255, 255, 255, 0.15);
+  .current-state {
+    text-align: center;
+    margin: 20px 0;
+    padding: 15px;
+    background: #e3f2fd;
+    border-radius: 8px;
+    font-size: 1.2em;
   }
 
-  .stat-icon {
-    font-size: 1.5rem;
-    margin-bottom: 0.5rem;
+  .actions {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 15px;
+    margin-top: 30px;
   }
 
-  .stat-value {
-    font-size: 1.5rem;
-    font-weight: 700;
-    color: white;
-    margin-bottom: 0.2rem;
-  }
-
-  .stat-label {
-    font-size: 0.8rem;
-    color: rgba(255, 255, 255, 0.7);
-  }
-
-  .control-panel {
-    background: rgba(0, 0, 0, 0.1);
-    border-radius: 15px;
-    padding: 1rem;
-    margin-bottom: 2rem;
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-  }
-
-  .toggle-button {
-    background: rgba(255, 255, 255, 0.1);
-    border: none;
-    color: white;
+  .btn {
     padding: 12px;
-    border-radius: 12px;
-    font-size: 1rem;
-    font-weight: 500;
+    border: none;
+    border-radius: 6px;
+    color: white;
+    font-weight: bold;
     cursor: pointer;
-    transition: all 0.3s;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
+    transition: transform 0.2s, opacity 0.2s;
   }
 
-  .toggle-button.active {
-    background: rgba(40, 167, 69, 0.3);
-    border: 1px solid #28a745;
-  }
-
-  .toggle-button:hover {
+  .btn:hover {
+    opacity: 0.9;
     transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
   }
 
-  .location {
-    background: rgba(255, 255, 255, 0.05);
-    padding: 10px 15px;
-    border-radius: 10px;
-    font-size: 0.9rem;
-    color: rgba(255, 255, 255, 0.9);
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
+  .service { background-color: #4CAF50; }
+  .rest { background-color: #FFC107; color: #333; }
+  .route { background-color: #2196F3; }
+  .accident { background-color: #F44336; }
 
-  .section-title {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 1rem;
-  }
-
-  .section-title h2 {
-    margin: 0;
+  .notification {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 12px 24px;
+    border-radius: 4px;
     color: white;
-    font-size: 1.3rem;
-    display: flex;
-    align-items: center;
-    gap: 8px;
+    font-weight: bold;
   }
 
-  .badge {
-    background: rgba(255, 255, 255, 0.1);
-    color: white;
-    padding: 4px 8px;
-    border-radius: 10px;
-    font-size: 0.8rem;
+  .error { background-color: #F44336; }
+  .success { background-color: #4CAF50; }
+
+  .loading-indicator {
+    text-align: center;
+    padding: 20px;
+    color: #666;
   }
 
-  .trips-list {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-    margin-bottom: 2rem;
-  }
-
-  .trip-card {
-    background: rgba(255, 255, 255, 0.1);
-    border-radius: 12px;
-    padding: 1rem;
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    transition: all 0.3s;
-  }
-
-  .trip-card:hover {
-    background: rgba(255, 255, 255, 0.15);
-    transform: translateX(5px);
-  }
-
-  .trip-card.confirmado {
-    border-left: 4px solid #28a745;
-  }
-
-  .trip-card.pendiente {
-    border-left: 4px solid #ffc107;
-  }
-
-  .trip-time {
-    font-size: 1.1rem;
-    font-weight: 500;
-    color: white;
-    min-width: 60px;
-  }
-
-  .trip-details h3 {
-    margin: 0 0 4px 0;
-    color: white;
-    font-size: 1rem;
-  }
-
-  .trip-details p {
-    margin: 0;
-    color: rgba(255, 255, 255, 0.7);
-    font-size: 0.9rem;
-  }
-
-  .trip-status {
-    margin-left: auto;
-    font-size: 0.8rem;
-    padding: 4px 8px;
-    border-radius: 10px;
-  }
-
-  .trip-card.confirmado .trip-status {
-    background: rgba(40, 167, 69, 0.2);
-    color: #28a745;
-  }
-
-  .trip-card.pendiente .trip-status {
-    background: rgba(255, 193, 7, 0.2);
-    color: #ffc107;
-  }
-
-  .bottom-nav {
-    display: flex;
-    justify-content: space-around;
-    background: rgba(0, 0, 0, 0.2);
-    border-radius: 20px;
-    padding: 0.8rem;
-  }
-
-  .nav-item {
-    color: rgba(255, 255, 255, 0.6);
-    text-decoration: none;
-    font-size: 1.2rem;
-    transition: all 0.3s;
-    padding: 0.5rem;
-    border-radius: 12px;
-  }
-
-  .nav-item.active {
-    color: white;
-    background: rgba(255, 255, 255, 0.15);
-  }
-
-  .nav-item:hover {
-    transform: translateY(-3px);
-  }
-
-  /* Responsive */
-  @media (max-width: 480px) {
-    .dashboard-container {
-      padding: 1rem;
-      border-radius: 0;
-    }
-    
-    .stats-grid {
-      grid-template-columns: 1fr;
-    }
+  .no-driver {
+    text-align: center;
+    padding: 20px;
+    color: #F44336;
+    font-weight: bold;
   }
 </style>

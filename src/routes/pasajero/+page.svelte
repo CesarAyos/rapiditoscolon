@@ -1,61 +1,130 @@
-<script>
+<script lang="ts">
 	import { supabase } from '../../components/supabase';
-
-	async function handleSubmit() {
-		if (password !== confirmPassword) {
-			alert('¡Las contraseñas no coinciden!');
-			return;
-		}
-
-		// Datos del formulario
-		const data = {
-			nombre: nombre,
-			apellido: apellido,
-			email: email,
-			telefono: telefono,
-			password: password,
-			genero: genero,
-			fecha_nacimiento: fechaNacimiento, // Asegúrate de usar el nombre correcto en tu base de datos
-			acepta_terminos: aceptaTerminos
-		};
-
-		// Inserción en la tabla de Supabase
-		const { error } = await supabase
-			.from('pasajero') // Cambia esto por el nombre exacto de tu tabla en la base de datos
-			.insert([data]);
-
-		if (error) {
-			console.error('Error al insertar los datos:', error.message);
-			alert('Hubo un error al registrar el usuario. Intenta de nuevo.');
-		} else {
-			alert('¡Registro exitoso! Bienvenido a Rapiditos Colón.');
-			// Redireccionar a /auth
-			window.location.href = '/auth';
-		}
-	}
-
+	import { goto } from '$app/navigation';
+	
+	// Tipos TypeScript para mejor seguridad
+	type Genero = 'masculino' | 'femenino' | 'otro' | 'prefiero-no-decir';
+	
 	let nombre = '';
 	let apellido = '';
 	let email = '';
 	let telefono = '';
 	let password = '';
 	let confirmPassword = '';
-	let genero = '';
+	let genero: Genero = 'masculino';
 	let fechaNacimiento = '';
 	let aceptaTerminos = false;
 	let showPassword = false;
-
+	let errorMessage = '';
+	let isLoading = false;
+	
 	const generos = [
-		{ value: 'masculino', label: 'Masculino' },
-		{ value: 'femenino', label: 'Femenino' },
-		{ value: 'otro', label: 'Otro' },
-		{ value: 'prefiero-no-decir', label: 'Prefiero no decir' }
+	  { value: 'masculino', label: 'Masculino' },
+	  { value: 'femenino', label: 'Femenino' },
+	  { value: 'otro', label: 'Otro' },
+	  { value: 'prefiero-no-decir', label: 'Prefiero no decir' }
 	];
-
+	
 	function togglePassword() {
-		showPassword = !showPassword;
+	  showPassword = !showPassword;
 	}
-</script>
+	
+	async function handleSubmit() {
+	  // Resetear mensajes de error
+	  errorMessage = '';
+	  isLoading = true;
+	  
+	  // Validaciones mejoradas
+	  if (password !== confirmPassword) {
+		errorMessage = '¡Las contraseñas no coinciden!';
+		isLoading = false;
+		return;
+	  }
+	  
+	  if (password.length < 8) {
+		errorMessage = 'La contraseña debe tener al menos 8 caracteres';
+		isLoading = false;
+		return;
+	  }
+	  
+	  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+		errorMessage = 'Por favor ingresa un email válido';
+		isLoading = false;
+		return;
+	  }
+	  
+	  if (!aceptaTerminos) {
+		errorMessage = 'Debes aceptar los términos y condiciones';
+		isLoading = false;
+		return;
+	  }
+	  
+	  try {
+		// 1. Registrar usuario en Supabase Auth
+		const { data: authData, error: authError } = await supabase.auth.signUp({
+		  email: email,
+		  password: password,
+		  options: {
+			data: {
+			  nombre_completo: `${nombre} ${apellido}`,
+			  telefono: telefono,
+			  genero: genero,
+			  fecha_nacimiento: fechaNacimiento
+			},
+			emailRedirectTo: `${window.location.origin}/auth/callback` // Para confirmación de email
+		  }
+		});
+		
+		if (authError) throw authError;
+		
+		// Verificar que el usuario fue creado
+		if (!authData.user) {
+		  throw new Error('No se pudo crear el usuario');
+		}
+		
+		// 2. Insertar datos adicionales en tabla pasajero
+		const { error: dbError } = await supabase
+		  .from('pasajero')
+		  .insert({
+			id: authData.user.id,
+			nombre: nombre.trim(),
+			apellido: apellido.trim(),
+			email: email.toLowerCase().trim(),
+			telefono: telefono.replace(/\D/g, ''), // Limpiar formato de teléfono
+			genero: genero,
+			fecha_nacimiento: fechaNacimiento,
+			acepta_terminos: aceptaTerminos,
+			created_at: new Date().toISOString()
+		  });
+		  
+		if (dbError) throw dbError;
+		
+		// 3. Redirigir a página de confirmación
+		goto('/auth/confirmacion?email=' + encodeURIComponent(email));
+		
+	  } catch (error: unknown) {
+		// Manejo de errores tipo-safe
+		if (error instanceof Error) {
+		  console.error('Error detallado:', error);
+		  
+		  // Mensajes de error específicos
+		  if (error.message.includes('User already registered')) {
+			errorMessage = 'Este email ya está registrado. ¿Olvidaste tu contraseña?';
+		  } else if (error.message.includes('password')) {
+			errorMessage = 'La contraseña no cumple con los requisitos de seguridad';
+		  } else {
+			errorMessage = 'Error en el registro: ' + error.message;
+		  }
+		} else {
+		  errorMessage = 'Ocurrió un error inesperado durante el registro';
+		}
+	  } finally {
+		isLoading = false;
+	  }
+	}
+  </script>
+  
+  <!-- Resto de tu formulario HTML (se mantiene igual) -->
 
 <div class="wrapper">
 	<div class="scroll-container">
