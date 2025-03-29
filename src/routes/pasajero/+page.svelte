@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { supabase } from '../../components/supabase';
 	import { goto } from '$app/navigation';
+	import type { AuthError } from '@supabase/supabase-js';
 	
-	// Tipos TypeScript para mejor seguridad
 	type Genero = 'masculino' | 'femenino' | 'otro' | 'prefiero-no-decir';
 	
 	let nombre = '';
@@ -17,6 +17,7 @@
 	let showPassword = false;
 	let errorMessage = '';
 	let isLoading = false;
+	let successMessage = '';
 	
 	const generos = [
 	  { value: 'masculino', label: 'Masculino' },
@@ -29,12 +30,31 @@
 	  showPassword = !showPassword;
 	}
 	
+	function validarTelefono(numero: string): boolean {
+	  const regex = /^(\+?\d{1,3}?[-.\s]?)?(\(\d{1,4}\)|\d{1,4})[-.\s]?\d{1,4}[-.\s]?\d{1,9}$/;
+	  return regex.test(numero);
+	}
+	
+	async function checkUserExists(email: string) {
+		const { data, error } = await supabase
+			.from('pasajero')
+			.select('email')
+			.eq('email', email.toLowerCase().trim())
+			.maybeSingle();
+			
+		if (error) {
+			console.error('Error al verificar usuario:', error);
+			return false;
+		}
+		return !!data;
+	}
+	
 	async function handleSubmit() {
-	  // Resetear mensajes de error
 	  errorMessage = '';
+	  successMessage = '';
 	  isLoading = true;
 	  
-	  // Validaciones mejoradas
+	  // Validaciones básicas
 	  if (password !== confirmPassword) {
 		errorMessage = '¡Las contraseñas no coinciden!';
 		isLoading = false;
@@ -53,6 +73,18 @@
 		return;
 	  }
 	  
+	  if (!validarTelefono(telefono)) {
+		errorMessage = 'Por favor ingresa un número de teléfono válido';
+		isLoading = false;
+		return;
+	  }
+	  
+	  if (!fechaNacimiento) {
+		errorMessage = 'La fecha de nacimiento es requerida';
+		isLoading = false;
+		return;
+	  }
+	  
 	  if (!aceptaTerminos) {
 		errorMessage = 'Debes aceptar los términos y condiciones';
 		isLoading = false;
@@ -60,71 +92,93 @@
 	  }
 	  
 	  try {
+		// Verificar si el usuario ya existe
+		const userExists = await checkUserExists(email);
+		if (userExists) {
+			errorMessage = 'Este correo electrónico ya está registrado. ¿Quieres iniciar sesión?';
+			isLoading = false;
+			return;
+		}
+		
+		const telefonoLimpio = telefono.replace(/\D/g, '');
+		const fechaNacimientoISO = new Date(fechaNacimiento).toISOString();
+
 		// 1. Registrar usuario en Supabase Auth
 		const { data: authData, error: authError } = await supabase.auth.signUp({
-		  email: email,
-		  password: password,
-		  options: {
-			data: {
-			  nombre_completo: `${nombre} ${apellido}`,
-			  telefono: telefono,
-			  genero: genero,
-			  fecha_nacimiento: fechaNacimiento
-			},
-			emailRedirectTo: `${window.location.origin}/auth/callback` // Para confirmación de email
-		  }
+			email: email.trim().toLowerCase(),
+			password: password,
+			options: {
+				data: {
+					full_name: `${nombre.trim()} ${apellido.trim()}`,
+					phone: telefonoLimpio,
+					gender: genero,
+					birth_date: fechaNacimientoISO
+				},
+			}
 		});
-		
+
 		if (authError) throw authError;
-		
-		// Verificar que el usuario fue creado
+
+		// Verificar registro exitoso
 		if (!authData.user) {
-		  throw new Error('No se pudo crear el usuario');
+			throw new Error('No se recibió data del usuario registrado');
 		}
-		
-		// 2. Insertar datos adicionales en tabla pasajero
+
+		// 2. Insertar en tabla pasajero
 		const { error: dbError } = await supabase
-		  .from('pasajero')
-		  .insert({
-			id: authData.user.id,
-			nombre: nombre.trim(),
-			apellido: apellido.trim(),
-			email: email.toLowerCase().trim(),
-			telefono: telefono.replace(/\D/g, ''), // Limpiar formato de teléfono
-			genero: genero,
-			fecha_nacimiento: fechaNacimiento,
-			acepta_terminos: aceptaTerminos,
-			created_at: new Date().toISOString()
-		  });
-		  
-		if (dbError) throw dbError;
-		
-		// 3. Redirigir a página de confirmación
-		goto('/auth/confirmacion?email=' + encodeURIComponent(email));
-		
-	  } catch (error: unknown) {
-		// Manejo de errores tipo-safe
-		if (error instanceof Error) {
-		  console.error('Error detallado:', error);
-		  
-		  // Mensajes de error específicos
-		  if (error.message.includes('User already registered')) {
-			errorMessage = 'Este email ya está registrado. ¿Olvidaste tu contraseña?';
-		  } else if (error.message.includes('password')) {
-			errorMessage = 'La contraseña no cumple con los requisitos de seguridad';
-		  } else {
-			errorMessage = 'Error en el registro: ' + error.message;
-		  }
-		} else {
-		  errorMessage = 'Ocurrió un error inesperado durante el registro';
+			.from('pasajero')
+			.insert({
+				nombre: nombre.trim(),
+				apellido: apellido.trim(),
+				email: email.toLowerCase().trim(),
+				telefono: telefonoLimpio,
+				genero: genero,
+				fecha_nacimiento: fechaNacimientoISO,
+				acepta_terminos: aceptaTerminos,
+				created_at: new Date().toISOString()
+			});
+
+		if (dbError) {
+			// Intentar eliminar el usuario de auth si falla la inserción en pasajero
+			await supabase.auth.admin.deleteUser(authData.user.id);
+			throw dbError;
 		}
-	  } finally {
-		isLoading = false;
-	  }
+
+	
+		successMessage = '¡Registro exitoso! Por favor verifica tu correo electrónico.';
+		goto('/auth');
+
+	  } catch (error: unknown) {
+			console.error('Error en el registro:', error);
+			
+			if (isAuthError(error)) {
+				if (error.message.includes('User already registered')) {
+					errorMessage = 'Este email ya está registrado. ¿Quieres iniciar sesión?';
+				} else if (error.status === 422) {
+					errorMessage = 'Error de validación: Verifica tus datos';
+				} else {
+					errorMessage = 'Error de autenticación: ' + error.message;
+				}
+			} else if (typeof error === 'object' && error !== null && 'message' in error) {
+				errorMessage = error.message as string;
+			} else {
+				errorMessage = 'Error inesperado. Por favor intenta nuevamente.';
+			}
+		} finally {
+			isLoading = false;
+		}
 	}
-  </script>
-  
-  <!-- Resto de tu formulario HTML (se mantiene igual) -->
+
+	function isAuthError(error: unknown): error is AuthError {
+		return typeof error === 'object' && 
+			   error !== null && 
+			   'message' in error && 
+			   'status' in error;
+	}
+</script>
+
+
+<!-- El resto del código HTML y CSS permanece igual -->
 
 <div class="wrapper">
 	<div class="scroll-container">
@@ -253,6 +307,12 @@
 				</div>
 			</form>
 
+			{#if errorMessage}
+  <div class="error-message">
+    {errorMessage}
+  </div>
+{/if}
+
 			<!-- Elementos decorativos -->
 			<div class="floating-elements">
 				<div class="circle circle-1"></div>
@@ -282,6 +342,17 @@
 		align-items: flex-start;
 		padding: 20px 0;
 	}
+
+	.error-message {
+  color: #ff6b6b;
+  background: rgba(255, 107, 107, 0.1);
+  padding: 12px;
+  border-radius: 8px;
+  margin-bottom: 1.5rem;
+  text-align: center;
+  font-size: 0.9rem;
+  border-left: 3px solid #ff6b6b;
+}
 
 	.scroll-container {
 		width: 100%;
