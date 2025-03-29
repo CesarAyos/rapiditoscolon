@@ -107,81 +107,80 @@
 
 	// Obtener último estado (se mantiene igual)
 	const obtenerUltimoEstado = async (conductorId: number) => {
-    try {
-        const { data, error: sbError } = await supabase
-            .from('estado_conductor')
-            .select('*')
-            .eq('conductor_id', conductorId)
-            .order('updated_at', { ascending: false }) // Usar updated_at en lugar de created_at
-            .limit(1);
+		try {
+			const { data, error: sbError } = await supabase
+				.from('estado_conductor')
+				.select('*')
+				.eq('conductor_id', conductorId)
+				.order('updated_at', { ascending: false }) // Usar updated_at en lugar de created_at
+				.limit(1);
 
-        if (sbError) throw sbError;
-        if (data?.[0]?.estado) {
-            estadoActual.set(data[0].estado);
-        }
-    } catch (err) {
-        error.set('Error obteniendo estado actual');
-        console.error(err);
-    }
-};
+			if (sbError) throw sbError;
+			if (data?.[0]?.estado) {
+				estadoActual.set(data[0].estado);
+			}
+		} catch (err) {
+			error.set('Error obteniendo estado actual');
+			console.error(err);
+		}
+	};
 
 	// Cambiar estado (se mantiene igual)
 	const cambiarEstado = async (nuevoEstado: string, descripcion: string = '') => {
-        if (!conductorData) {
-            error.set('No hay datos del conductor');
-            return;
-        }
+		if (!conductorData) {
+			error.set('No hay datos del conductor');
+			return;
+		}
 
-        isLoading.set(true);
-        try {
-            // Primero buscamos si existe un registro de estado para este conductor
-            const { data: estadoExistente, error: searchError } = await supabase
-                .from('estado_conductor')
-                .select('id')
-                .eq('conductor_id', conductorData.id)
-                .order('created_at', { ascending: false })
-                .limit(1)
-                .single();
+		isLoading.set(true);
+		try {
+			// Primero buscamos si existe un registro de estado para este conductor
+			const { data: estadoExistente, error: searchError } = await supabase
+				.from('estado_conductor')
+				.select('id')
+				.eq('conductor_id', conductorData.id)
+				.order('created_at', { ascending: false })
+				.limit(1)
+				.single();
 
-            if (searchError && searchError.code !== 'PGRST116') { // Ignorar error "No rows found"
-                throw searchError;
-            }
+			if (searchError && searchError.code !== 'PGRST116') {
+				// Ignorar error "No rows found"
+				throw searchError;
+			}
 
-            if (estadoExistente?.id) {
-                // Si existe, actualizamos el registro existente
-                const { error: updateError } = await supabase
-                    .from('estado_conductor')
-                    .update({
-                        estado: nuevoEstado,
-                        descripcion: descripcion || null,
-                        updated_at: new Date().toISOString() // Opcional: añadir campo de actualización
-                    })
-                    .eq('id', estadoExistente.id);
+			if (estadoExistente?.id) {
+				// Si existe, actualizamos el registro existente
+				const { error: updateError } = await supabase
+					.from('estado_conductor')
+					.update({
+						estado: nuevoEstado,
+						descripcion: descripcion || null,
+						updated_at: new Date().toISOString() // Opcional: añadir campo de actualización
+					})
+					.eq('id', estadoExistente.id);
 
-                if (updateError) throw updateError;
-            } else {
-                // Si no existe, creamos un nuevo registro
-                const { error: insertError } = await supabase
-                    .from('estado_conductor')
-                    .insert({
-                        conductor_id: conductorData.id,
-                        estado: nuevoEstado,
-                        descripcion: descripcion || null
-                    });
+				if (updateError) throw updateError;
+			} else {
+				// Si no existe, creamos un nuevo registro
+				const { error: insertError } = await supabase.from('estado_conductor').insert({
+					conductor_id: conductorData.id,
+					estado: nuevoEstado,
+					descripcion: descripcion || null
+				});
 
-                if (insertError) throw insertError;
-            }
+				if (insertError) throw insertError;
+			}
 
-            estadoActual.set(nuevoEstado);
-            error.set(`Estado actualizado: ${nuevoEstado}`);
-            setTimeout(() => error.set(''), 3000);
-        } catch (err) {
-            error.set('Error cambiando estado');
-            console.error(err);
-        } finally {
-            isLoading.set(false);
-        }
-    };
+			estadoActual.set(nuevoEstado);
+			error.set(`Estado actualizado: ${nuevoEstado}`);
+			setTimeout(() => error.set(''), 3000);
+		} catch (err) {
+			error.set('Error cambiando estado');
+			console.error(err);
+		} finally {
+			isLoading.set(false);
+		}
+	};
 
 	// Inicialización
 	onMount(async () => {
@@ -211,6 +210,7 @@
 						>{conductorData.propiedad}: {conductorData.nombre}</span
 					>
 					<span class="user-badge text-uppercase">Placa: {conductorData.placa}</span>
+					<a href="/auth/dashboard-conductor/maps" class="user-badge text-uppercase text-white text-decoration-none">maps</a>
 					<Lock />
 				</div>
 			{:else}

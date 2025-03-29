@@ -1,181 +1,172 @@
 <script lang="ts">
-	import { supabase } from '../../components/supabase';
-	import { goto } from '$app/navigation';
-	import type { AuthError } from '@supabase/supabase-js';
-	
-	type Genero = 'masculino' | 'femenino' | 'otro' | 'prefiero-no-decir';
-	
-	let nombre = '';
-	let apellido = '';
-	let email = '';
-	let telefono = '';
-	let password = '';
-	let confirmPassword = '';
-	let genero: Genero = 'masculino';
-	let fechaNacimiento = '';
-	let aceptaTerminos = false;
-	let showPassword = false;
-	let errorMessage = '';
-	let isLoading = false;
-	let successMessage = '';
-	
-	const generos = [
-	  { value: 'masculino', label: 'Masculino' },
-	  { value: 'femenino', label: 'Femenino' },
-	  { value: 'otro', label: 'Otro' },
-	  { value: 'prefiero-no-decir', label: 'Prefiero no decir' }
-	];
-	
-	function togglePassword() {
-	  showPassword = !showPassword;
-	}
-	
-	function validarTelefono(numero: string): boolean {
-	  const regex = /^(\+?\d{1,3}?[-.\s]?)?(\(\d{1,4}\)|\d{1,4})[-.\s]?\d{1,4}[-.\s]?\d{1,9}$/;
-	  return regex.test(numero);
-	}
-	
-	async function checkUserExists(email: string) {
-		const { data, error } = await supabase
-			.from('pasajero')
-			.select('email')
-			.eq('email', email.toLowerCase().trim())
-			.maybeSingle();
-			
-		if (error) {
-			console.error('Error al verificar usuario:', error);
-			return false;
-		}
-		return !!data;
-	}
-	
-	async function handleSubmit() {
-	  errorMessage = '';
-	  successMessage = '';
-	  isLoading = true;
-	  
-	  // Validaciones básicas
-	  if (password !== confirmPassword) {
-		errorMessage = '¡Las contraseñas no coinciden!';
-		isLoading = false;
-		return;
-	  }
-	  
-	  if (password.length < 8) {
-		errorMessage = 'La contraseña debe tener al menos 8 caracteres';
-		isLoading = false;
-		return;
-	  }
-	  
-	  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-		errorMessage = 'Por favor ingresa un email válido';
-		isLoading = false;
-		return;
-	  }
-	  
-	  if (!validarTelefono(telefono)) {
-		errorMessage = 'Por favor ingresa un número de teléfono válido';
-		isLoading = false;
-		return;
-	  }
-	  
-	  if (!fechaNacimiento) {
-		errorMessage = 'La fecha de nacimiento es requerida';
-		isLoading = false;
-		return;
-	  }
-	  
-	  if (!aceptaTerminos) {
-		errorMessage = 'Debes aceptar los términos y condiciones';
-		isLoading = false;
-		return;
-	  }
-	  
-	  try {
-		// Verificar si el usuario ya existe
-		const userExists = await checkUserExists(email);
-		if (userExists) {
-			errorMessage = 'Este correo electrónico ya está registrado. ¿Quieres iniciar sesión?';
-			isLoading = false;
-			return;
-		}
-		
-		const telefonoLimpio = telefono.replace(/\D/g, '');
-		const fechaNacimientoISO = new Date(fechaNacimiento).toISOString();
+    import { supabase } from '../../components/supabase';
+    import { goto } from '$app/navigation';
+    import type { AuthError } from '@supabase/supabase-js';
+    
+    type Genero = 'masculino' | 'femenino' | 'otro' | 'prefiero-no-decir';
+    
+    // Variables y estados
+    let nombre = '';
+    let apellido = '';
+    let email = '';
+    let telefono = '';
+    let password = '';
+    let confirmPassword = '';
+    let genero: Genero = 'masculino';
+    let fechaNacimiento = '';
+    let aceptaTerminos = false;
+    let showPassword = false;
+    let errorMessage = '';
+    let isLoading = false;
+    let successMessage = '';
 
-		// 1. Registrar usuario en Supabase Auth
-		const { data: authData, error: authError } = await supabase.auth.signUp({
-			email: email.trim().toLowerCase(),
-			password: password,
-			options: {
-				data: {
-					full_name: `${nombre.trim()} ${apellido.trim()}`,
-					phone: telefonoLimpio,
-					gender: genero,
-					birth_date: fechaNacimientoISO
-				},
-			}
-		});
+    const generos = [
+      { value: 'masculino', label: 'Masculino' },
+      { value: 'femenino', label: 'Femenino' },
+      { value: 'otro', label: 'Otro' },
+      { value: 'prefiero-no-decir', label: 'Prefiero no decir' }
+    ];
 
-		if (authError) throw authError;
+    // Función para alternar la visibilidad de la contraseña
+    function togglePassword() {
+        showPassword = !showPassword;
+    }
 
-		// Verificar registro exitoso
-		if (!authData.user) {
-			throw new Error('No se recibió data del usuario registrado');
-		}
+    // Validación de teléfono con regex
+    function validarTelefono(numero: string): boolean {
+        const regex = /^(\+?\d{1,3}?[-.\s]?)?(\(\d{1,4}\)|\d{1,4})[-.\s]?\d{1,4}[-.\s]?\d{1,9}$/;
+        return regex.test(numero);
+    }
 
-		// 2. Insertar en tabla pasajero
-		const { error: dbError } = await supabase
-			.from('pasajero')
-			.insert({
-				nombre: nombre.trim(),
-				apellido: apellido.trim(),
-				email: email.toLowerCase().trim(),
-				telefono: telefonoLimpio,
-				genero: genero,
-				fecha_nacimiento: fechaNacimientoISO,
-				acepta_terminos: aceptaTerminos,
-				created_at: new Date().toISOString()
-			});
+    // Verificar si un usuario ya existe en la base de datos
+    async function checkUserExists(email: string): Promise<boolean> {
+        const { data, error } = await supabase
+            .from('pasajero')
+            .select('email')
+            .eq('email', email.toLowerCase().trim())
+            .maybeSingle();
+            
+        if (error) {
+            console.error('Error al verificar usuario:', error);
+            return false;
+        }
+        return !!data;
+    }
 
-		if (dbError) {
-			// Intentar eliminar el usuario de auth si falla la inserción en pasajero
-			await supabase.auth.admin.deleteUser(authData.user.id);
-			throw dbError;
-		}
+    // Validar todos los inputs
+    function validateInputs(): string | null {
+        if (password !== confirmPassword) return '¡Las contraseñas no coinciden!';
+        if (password.length < 8) return 'La contraseña debe tener al menos 8 caracteres';
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return 'Por favor ingresa un email válido';
+        if (!validarTelefono(telefono)) return 'Por favor ingresa un número de teléfono válido';
+        if (!fechaNacimiento) return 'La fecha de nacimiento es requerida';
+        if (!aceptaTerminos) return 'Debes aceptar los términos y condiciones';
+        return null;
+    }
 
-	
-		successMessage = '¡Registro exitoso! Por favor verifica tu correo electrónico.';
-		goto('/auth');
+    // Manejar el registro del usuario
+    async function handleSubmit() {
+        errorMessage = '';
+        successMessage = '';
+        isLoading = true;
 
-	  } catch (error: unknown) {
-			console.error('Error en el registro:', error);
-			
-			if (isAuthError(error)) {
-				if (error.message.includes('User already registered')) {
-					errorMessage = 'Este email ya está registrado. ¿Quieres iniciar sesión?';
-				} else if (error.status === 422) {
-					errorMessage = 'Error de validación: Verifica tus datos';
-				} else {
-					errorMessage = 'Error de autenticación: ' + error.message;
-				}
-			} else if (typeof error === 'object' && error !== null && 'message' in error) {
-				errorMessage = error.message as string;
-			} else {
-				errorMessage = 'Error inesperado. Por favor intenta nuevamente.';
-			}
-		} finally {
-			isLoading = false;
-		}
-	}
+        // Validación inicial
+        const validationError = validateInputs();
+        if (validationError) {
+            errorMessage = validationError;
+            isLoading = false;
+            return;
+        }
 
-	function isAuthError(error: unknown): error is AuthError {
-		return typeof error === 'object' && 
-			   error !== null && 
-			   'message' in error && 
-			   'status' in error;
-	}
+        try {
+            // Limpiar datos
+            const telefonoLimpio = telefono.replace(/\D/g, '');
+            const fechaNacimientoISO = new Date(fechaNacimiento).toISOString();
+
+            // Verificar si el usuario ya existe
+            const userExists = await checkUserExists(email);
+            if (userExists) {
+                errorMessage = 'Este correo electrónico ya está registrado. ¿Quieres iniciar sesión?';
+                isLoading = false;
+                return;
+            }
+
+            // Registrar usuario en Supabase Auth
+            const { data: authData, error: authError } = await supabase.auth.signUp({
+                email: email.trim().toLowerCase(),
+                password: password,
+                options: {
+                    data: {
+                        full_name: `${nombre.trim()} ${apellido.trim()}`,
+                        phone: telefonoLimpio,
+                        gender: genero,
+                        birth_date: fechaNacimientoISO,
+                    },
+                },
+            });
+
+            if (authError) throw authError;
+
+            // Verificar registro exitoso
+            if (!authData?.user?.id) {
+                throw new Error('No se recibió el ID del usuario registrado desde Supabase Auth');
+            }
+
+            // Insertar usuario en la tabla 'pasajero'
+            const { error: dbError } = await supabase
+                .from('pasajero')
+                .insert({
+                    user_id: authData.user.id, // Vincular con Supabase Auth
+                    nombre: nombre.trim(),
+                    apellido: apellido.trim(),
+                    email: email.trim().toLowerCase(),
+                    telefono: telefonoLimpio,
+                    genero: genero,
+                    fecha_nacimiento: fechaNacimientoISO,
+                    acepta_terminos: aceptaTerminos,
+                    created_at: new Date().toISOString(),
+                });
+
+            if (dbError) {
+                // Eliminar usuario de Supabase Auth si falla el registro en la tabla
+                await supabase.auth.admin.deleteUser(authData.user.id);
+                throw dbError;
+            }
+
+            // Mensaje de éxito
+            successMessage = '¡Registro exitoso! Por favor verifica tu correo electrónico.';
+            goto('/auth');
+        } catch (error: unknown) {
+            console.error('Error en el registro:', error);
+
+            // Manejo de errores
+            if (isAuthError(error)) {
+                if (error.message.includes('User already registered')) {
+                    errorMessage = 'Este email ya está registrado. ¿Quieres iniciar sesión?';
+                } else if (error.status === 422) {
+                    errorMessage = 'Error de validación: Verifica tus datos';
+                } else {
+                    errorMessage = `Error de autenticación: ${error.message}`;
+                }
+            } else if (typeof error === 'object' && error !== null && 'message' in error) {
+                errorMessage = (error as Error).message;
+            } else {
+                errorMessage = 'Error inesperado. Por favor intenta nuevamente.';
+            }
+        } finally {
+            isLoading = false;
+        }
+    }
+
+    // Verificar si un error es de autenticación
+    function isAuthError(error: unknown): error is AuthError {
+        return typeof error === 'object' && 
+               error !== null && 
+               'message' in error && 
+               'status' in error;
+    }
 </script>
+
 
 
 <!-- El resto del código HTML y CSS permanece igual -->
