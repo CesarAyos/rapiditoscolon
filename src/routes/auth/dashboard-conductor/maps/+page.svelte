@@ -3,7 +3,7 @@
 	import { writable } from 'svelte/store';
 	import { browser } from '$app/environment';
 	import { supabase } from '../../../../components/supabase';
-    import Lock from '../../../../components/lock.svelte';
+	import Lock from '../../../../components/lock.svelte';
 
 	type Conductor = {
 		id: number;
@@ -13,6 +13,7 @@
 		control: string;
 		propiedad: string;
 		telefono?: string | null;
+		estado?: 'en_servicio' | 'ruta_colon_urena' | 'ruta_urena_colon' | 'accidentado' | 'descanso';
 	};
 
 	type PosicionConductor = {
@@ -25,6 +26,29 @@
 		timestamp: string;
 	};
 
+	type DriverStatus = {
+		en_servicio: Conductor[];
+		ruta_colon_urena: Conductor[];
+		ruta_urena_colon: Conductor[];
+		accidentado: Conductor[];
+		descanso: Conductor[];
+	};
+
+	interface ConductorFromDB {
+		id: number;
+		nombre: string;
+		placa: string;
+		email: string;
+		control: string;
+		propiedad: string;
+		telefono?: string | null;
+	}
+
+	interface EstadoConductorResponse {
+		estado: 'en_servicio' | 'ruta_colon_urena' | 'ruta_urena_colon' | 'accidentado' | 'descanso';
+		conductor: ConductorFromDB;
+	}
+
 	// Stores
 	const conductor = writable<Conductor | null>(null);
 	const estadoActual = writable<string>('Descanso');
@@ -34,6 +58,14 @@
 	const trackingActive = writable<boolean>(false);
 	const positionHistory = writable<PosicionConductor[]>([]);
 	const otherDrivers = writable<Conductor[]>([]);
+	const driverStatusStore = writable<DriverStatus>({
+		en_servicio: [],
+		ruta_colon_urena: [],
+		ruta_urena_colon: [],
+		accidentado: [],
+		descanso: []
+	});
+	const loadingStatus = writable<boolean>(false);
 
 	// Variables reactivas
 	let conductorData: Conductor | null = null;
@@ -50,6 +82,14 @@
 	let drivers: Conductor[] = [];
 	let history: PosicionConductor[] = [];
 	let L: any = null;
+	let driverStatusData: DriverStatus = {
+		en_servicio: [],
+		ruta_colon_urena: [],
+		ruta_urena_colon: [],
+		accidentado: [],
+		descanso: []
+	};
+	let loadingDriverStatus = false;
 
 	// Suscripciones
 	conductor.subscribe((value) => (conductorData = value));
@@ -60,6 +100,8 @@
 	trackingActive.subscribe((value) => (isTracking = value));
 	positionHistory.subscribe((value) => (history = value));
 	otherDrivers.subscribe((value) => (drivers = value));
+	driverStatusStore.subscribe((value) => (driverStatusData = value));
+	loadingStatus.subscribe((value) => (loadingDriverStatus = value));
 
 	// Inicializar mapa
 	const initMap = async (): Promise<boolean> => {
@@ -118,9 +160,11 @@
 	};
 
 	const savePosition = async (lat: number, lng: number, accuracy?: number) => {
+		if (!conductorData) return;
+
 		try {
 			const { error } = await supabase.from('conductor_posiciones').insert({
-				conductor_id: conductorData!.id,
+				conductor_id: conductorData.id,
 				lat,
 				lng,
 				accuracy,
@@ -132,6 +176,7 @@
 			console.error('Error guardando posición:', err);
 		}
 	};
+
 
 	const getCurrentPosition = () => {
 		if (!browser) return;
@@ -230,13 +275,15 @@
 		try {
 			const { data, error: sbError } = await supabase
 				.from('conductor_posiciones')
-				.select(`
+				.select(
+					`
 					conductor_id,
 					lat,
 					lng,
 					estado,
 					conductor:conductor_id(id, nombre, placa, control, propiedad)
-				`)
+				`
+				)
 				.order('timestamp', { ascending: false })
 				.limit(50);
 
@@ -335,12 +382,12 @@
 				.maybeSingle();
 
 			if (sbError) throw sbError;
-			
+
 			if (data) {
 				estadoActual.set(data.estado);
 				return data.estado;
 			}
-			
+
 			estadoActual.set('Descanso');
 			return 'Descanso';
 		} catch (err) {
@@ -350,12 +397,83 @@
 		}
 	};
 
+	const loadDriverStatus = async () => {
+  loadingStatus.set(true);
+  try {
+    // 1. Consulta directa a la tabla conductores con su estado actual
+    const { data: conductores, error: conductoresError } = await supabase
+      .from('conductor')
+      .select(`
+        id,
+        nombre,
+        placa,
+        email,
+        control,
+        propiedad,
+        telefono,
+        estado_actual:estado_conductor!inner(estado)
+      `)
+      .order('created_at', { foreignTable: 'estado_conductor', ascending: false });
+
+    if (conductoresError) throw conductoresError;
+    if (!conductores) throw new Error('No se encontraron conductores');
+
+    // 2. Procesamiento de datos
+    const statusData: DriverStatus = {
+      en_servicio: [],
+      ruta_colon_urena: [],
+      ruta_urena_colon: [],
+      accidentado: [],
+      descanso: []
+    };
+
+    conductores.forEach(conductor => {
+      // Verificar si tiene estado definido
+      const estado = conductor.estado_actual?.[0]?.estado || 'descanso';
+      
+      const conductorConEstado: Conductor = {
+        ...conductor,
+        estado: estado as 'en_servicio' | 'ruta_colon_urena' | 'ruta_urena_colon' | 'accidentado' | 'descanso'
+      };
+
+      // Agrupar por estado
+      switch (estado) {
+        case 'en_servicio':
+          statusData.en_servicio.push(conductorConEstado);
+          break;
+        case 'ruta_colon_urena':
+          statusData.ruta_colon_urena.push(conductorConEstado);
+          break;
+        case 'ruta_urena_colon':
+          statusData.ruta_urena_colon.push(conductorConEstado);
+          break;
+        case 'accidentado':
+          statusData.accidentado.push(conductorConEstado);
+          break;
+        case 'descanso':
+          statusData.descanso.push(conductorConEstado);
+          break;
+        default:
+          statusData.descanso.push(conductorConEstado);
+      }
+    });
+
+    driverStatusStore.set(statusData);
+  } catch (error) {
+    console.error('Error al cargar estados:', error);
+    
+  } finally {
+    loadingStatus.set(false);
+  }
+};
+
 	onMount(() => {
 		(async () => {
 			try {
 				await getSession();
 				await obtenerConductor();
-				initMap();
+				await initMap();
+				await loadDriverStatus();
 			} catch (error) {
 				console.error('Error durante la inicialización:', error);
 			}
@@ -369,6 +487,7 @@
 				const authData = supabase.auth.onAuthStateChange((event, session) => {
 					if (event === 'SIGNED_IN') {
 						obtenerConductor();
+						loadDriverStatus();
 					} else if (event === 'SIGNED_OUT') {
 						conductor.set(null);
 						estadoActual.set('Descanso');
@@ -401,6 +520,7 @@
 		const interval = setInterval(() => {
 			try {
 				getOtherDrivers();
+				loadDriverStatus();
 			} catch (error) {
 				console.error('Error en la actualización del intervalo:', error);
 			}
@@ -451,9 +571,7 @@
 					<span class="user-badge">Control: {conductorData.control}</span>
 					<span class="user-badge">{conductorData.propiedad}: {conductorData.nombre}</span>
 					<span class="user-badge">Placa: {conductorData.placa}</span>
-					<a
-						href="/auth/dashboard-conductor/maps"
-						class="user-badge">Mapa</a>
+					<a href="/auth/dashboard-conductor/maps" class="user-badge">Mapa</a>
 					<Lock />
 				</div>
 			{:else}
@@ -514,6 +632,89 @@
 		</div>
 	</main>
 </div>
+
+<div class="status-section">
+    <div class="status-header">
+      <h2>Estado de Conductores</h2>
+      <button on:click={loadDriverStatus} class="refresh-btn">
+        <!-- Icono SVG... -->
+        Actualizar
+      </button>
+    </div>
+  
+    {#if loadingDriverStatus}
+      <div class="loading-spinner">
+        <div class="spinner"></div>
+      </div>
+    {:else}
+      <div class="status-grid">
+        <div class="status-card">
+          <h3>En Servicio</h3>
+          {#each driverStatusData.en_servicio as driver}
+            <div class="driver-status-item">
+              <span class="driver-name">{driver.nombre}</span>
+              <span class="driver-placa">{driver.placa}</span>
+              <span class="driver-placa">control:{driver.control}</span>
+            </div>
+          {:else}
+            <p class="no-drivers">No hay conductores en servicio</p>
+          {/each}
+        </div>
+  
+        <div class="status-card">
+          <h3>Ruta Colón - Ureña</h3>
+          {#each driverStatusData.ruta_colon_urena as driver}
+            <div class="driver-status-item">
+              <span class="driver-name">{driver.nombre}</span>
+              <span class="driver-placa">{driver.placa}</span>
+              <span class="driver-placa">control:{driver.control}</span>
+            </div>
+          {:else}
+            <p class="no-drivers">No hay conductores en esta ruta</p>
+          {/each}
+        </div>
+  
+        <div class="status-card">
+          <h3>Ruta Ureña - Colón</h3>
+          {#each driverStatusData.ruta_urena_colon as driver}
+            <div class="driver-status-item">
+              <span class="driver-name">{driver.nombre}</span>
+              <span class="driver-placa">{driver.placa}</span>
+              <span class="driver-placa">control:{driver.control}</span>s
+            </div>
+          {:else}
+            <p class="no-drivers">No hay conductores en esta ruta</p>
+          {/each}
+        </div>
+  
+        <div class="status-card">
+          <h3>Accidentados</h3>
+          {#each driverStatusData.accidentado as driver}
+            <div class="driver-status-item">
+              <span class="driver-name">{driver.nombre}</span>
+              <span class="driver-placa">{driver.placa}</span>
+              <span class="driver-placa">control:{driver.control}</span>
+            </div>
+          {:else}
+            <p class="no-drivers">No hay conductores accidentados</p>
+          {/each}
+        </div>
+  
+        <div class="status-card">
+          <h3>En Descanso</h3>
+          {#each driverStatusData.descanso as driver}
+            <div class="driver-status-item">
+              <span class="driver-name">{driver.nombre}</span>
+              <span class="driver-placa">{driver.placa}</span>
+              <span class="driver-placa">control:{driver.control}</span>
+            </div>
+          {:else}
+            <p class="no-drivers">No hay conductores en descanso</p>
+          {/each}
+        </div>
+      </div>
+    {/if}
+  </div>
 
 <style>
 	.dashboard-container {
@@ -615,7 +816,9 @@
 	}
 
 	@keyframes spin {
-		to { transform: rotate(360deg); }
+		to {
+			transform: rotate(360deg);
+		}
 	}
 
 	.map-controls {
@@ -685,7 +888,9 @@
 		border-radius: 6px;
 		font-size: 0.9rem;
 		align-items: center;
-		transition: transform 0.2s, box-shadow 0.2s;
+		transition:
+			transform 0.2s,
+			box-shadow 0.2s;
 	}
 
 	.driver-item:hover {
@@ -744,7 +949,8 @@
 			gap: 0.5rem;
 		}
 
-		.driver-placa, .driver-control {
+		.driver-placa,
+		.driver-control {
 			text-align: left;
 			width: 100%;
 		}
@@ -769,6 +975,134 @@
 			flex-direction: column;
 			align-items: flex-start;
 			gap: 0.5rem;
+		}
+	}
+
+	.status-section {
+		margin-top: 2rem;
+		background: white;
+		border-radius: 10px;
+		padding: 1.5rem;
+		box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+	}
+
+	.status-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		margin-bottom: 1.5rem;
+	}
+
+	.status-header h2 {
+		margin: 0;
+		font-size: 1.4rem;
+		color: #2c3e50;
+	}
+
+	.refresh-btn {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		padding: 0.5rem 1rem;
+		background-color: #3498db;
+		color: white;
+		border: none;
+		border-radius: 6px;
+		cursor: pointer;
+		transition: all 0.2s;
+		font-size: 0.9rem;
+	}
+
+	.refresh-btn:hover {
+		background-color: #2980b9;
+		transform: translateY(-1px);
+	}
+
+
+	@keyframes spin {
+		from {
+			transform: rotate(0deg);
+		}
+		to {
+			transform: rotate(360deg);
+		}
+	}
+
+	.status-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+		gap: 1.5rem;
+	}
+
+	.status-card {
+		background: #f8f9fa;
+		border-radius: 8px;
+		padding: 1rem;
+		border-left: 4px solid #3498db;
+	}
+
+	.status-card h3 {
+		margin: 0 0 1rem 0;
+		font-size: 1.1rem;
+		color: #2c3e50;
+		padding-bottom: 0.5rem;
+		border-bottom: 1px solid #e0e6ed;
+	}
+
+	.driver-status-item {
+		display: flex;
+		justify-content: space-between;
+		padding: 0.5rem 0;
+		font-size: 0.9rem;
+	}
+
+	.driver-status-item:not(:last-child) {
+		border-bottom: 1px dashed #e0e6ed;
+	}
+
+	.no-drivers {
+		color: #718096;
+		font-size: 0.9rem;
+		font-style: italic;
+		margin: 0.5rem 0;
+	}
+
+	.loading-spinner {
+		display: flex;
+		justify-content: center;
+		padding: 2rem;
+	}
+
+	.spinner {
+		width: 2rem;
+		height: 2rem;
+		border: 3px solid rgba(0, 0, 0, 0.1);
+		border-radius: 50%;
+		border-top-color: #3498db;
+		animation: spin 1s ease-in-out infinite;
+	}
+
+	/* Responsive adjustments */
+	@media (max-width: 768px) {
+		.status-grid {
+			grid-template-columns: 1fr 1fr;
+		}
+	}
+
+	@media (max-width: 480px) {
+		.status-grid {
+			grid-template-columns: 1fr;
+		}
+
+		.status-header {
+			flex-direction: column;
+			align-items: flex-start;
+			gap: 1rem;
+		}
+
+		.refresh-btn {
+			width: 100%;
+			justify-content: center;
 		}
 	}
 </style>
