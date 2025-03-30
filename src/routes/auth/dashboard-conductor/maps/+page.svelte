@@ -607,6 +607,10 @@
 			map = null;
 		}
 	});
+
+	const recargarPagina = () => {
+        window.location.reload();
+    };
 </script>
 <svelte:head>
 	<link
@@ -633,7 +637,9 @@
 			{/if}
 		</div>
 	</nav>
-
+	<button on:click={recargarPagina} class="reload-btn">
+		↻ Recargar
+	</button>
 	<main class="dashboard-content">
 		<div class="content-wrapper">
 			<div class="map-controls">
@@ -1159,4 +1165,6 @@
 			justify-content: center;
 		}
 	}
+
+	
 </style>
