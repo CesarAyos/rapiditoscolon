@@ -516,22 +516,75 @@
 </div>
 
 <style>
-	.map-container {
+	.dashboard-container {
 		display: flex;
 		flex-direction: column;
-		height: 100%;
-		gap: 1rem;
+		min-height: 100vh;
+		background-color: #f5f7fa;
+		font-family: 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+	}
+
+	.dashboard-nav {
+		background-color: #2c3e50;
+		color: white;
+		padding: 0.8rem 1.5rem;
+		box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+	}
+
+	.nav-user {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+	}
+
+	.badge-container {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.8rem;
+		align-items: center;
+	}
+
+	.user-badge {
+		background-color: rgba(255, 255, 255, 0.1);
+		padding: 0.5rem 0.8rem;
+		border-radius: 20px;
+		font-size: 0.85rem;
+		display: inline-flex;
+		align-items: center;
+		gap: 0.3rem;
+		transition: background-color 0.2s;
+		color: white;
+		text-decoration: none;
+	}
+
+	.user-badge:hover {
+		background-color: rgba(255, 255, 255, 0.2);
+	}
+
+	.dashboard-content {
+		flex: 1;
+		padding: 1.5rem;
+	}
+
+	.content-wrapper {
+		max-width: 1200px;
+		margin: 0 auto;
+		width: 100%;
+		display: flex;
+		flex-direction: column;
+		gap: 1.5rem;
 	}
 
 	.map-view {
 		width: 100%;
-		flex: 1;
+		height: 60vh;
+		min-height: 400px;
 		border-radius: 8px;
-		box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+		box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
 		position: relative;
 		background-color: #f8f9fa;
-		border: 1px solid #ddd;
-		min-height: 400px;
+		border: 1px solid #e0e6ed;
+		overflow: hidden;
 	}
 
 	.map-loading {
@@ -541,23 +594,38 @@
 		right: 0;
 		bottom: 0;
 		display: flex;
+		flex-direction: column;
 		align-items: center;
 		justify-content: center;
-		background: rgba(255, 255, 255, 0.9);
+		background: rgba(255, 255, 255, 0.95);
 		border-radius: 8px;
 		font-weight: 500;
-		color: #666;
+		color: #4a5568;
 		z-index: 100;
+		gap: 1rem;
+	}
+
+	.spinner.small {
+		width: 2.5rem;
+		height: 2.5rem;
+		border: 3px solid rgba(0, 0, 0, 0.1);
+		border-radius: 50%;
+		border-top-color: #3498db;
+		animation: spin 1s ease-in-out infinite;
+	}
+
+	@keyframes spin {
+		to { transform: rotate(360deg); }
 	}
 
 	.map-controls {
 		display: flex;
-		gap: 0.5rem;
+		gap: 0.75rem;
 		flex-wrap: wrap;
 	}
 
 	.map-btn {
-		padding: 0.5rem 1rem;
+		padding: 0.65rem 1.25rem;
 		border: none;
 		border-radius: 6px;
 		background-color: #e3f2fd;
@@ -565,14 +633,17 @@
 		font-weight: 500;
 		cursor: pointer;
 		transition: all 0.2s ease;
-		display: flex;
+		display: inline-flex;
 		align-items: center;
 		gap: 0.5rem;
 		font-size: 0.9rem;
+		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 	}
 
 	.map-btn:hover:not(:disabled) {
 		background-color: #bbdefb;
+		transform: translateY(-1px);
+		box-shadow: 0 2px 5px rgba(0, 0, 0, 0.15);
 	}
 
 	.map-btn.active {
@@ -583,50 +654,121 @@
 	.map-btn:disabled {
 		opacity: 0.6;
 		cursor: not-allowed;
-		background-color: #e9ecef;
-		color: #6c757d;
+		background-color: #edf2f7;
+		color: #a0aec0;
+	}
+
+	.drivers-panel {
+		background-color: white;
+		border-radius: 8px;
+		padding: 1.25rem;
+		box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+	}
+
+	.drivers-panel h3 {
+		margin: 0 0 1rem 0;
+		font-size: 1.1rem;
+		color: #2d3748;
+		font-weight: 600;
 	}
 
 	.drivers-list {
 		display: grid;
-		gap: 0.5rem;
-		margin-top: 1rem;
+		gap: 0.75rem;
 	}
 
 	.driver-item {
 		display: flex;
 		justify-content: space-between;
-		padding: 0.75rem;
+		padding: 0.9rem;
 		background-color: #f8f9fa;
 		border-radius: 6px;
 		font-size: 0.9rem;
 		align-items: center;
+		transition: transform 0.2s, box-shadow 0.2s;
+	}
+
+	.driver-item:hover {
+		transform: translateY(-2px);
+		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+		background-color: #edf2f7;
 	}
 
 	.driver-name {
 		font-weight: 500;
 		flex: 2;
+		color: #2d3748;
 	}
 
 	.driver-placa {
 		flex: 1;
 		text-align: center;
-		font-family: monospace;
-		background-color: #e9ecef;
-		padding: 0.25rem 0.5rem;
+		font-family: 'Roboto Mono', monospace;
+		background-color: #e2e8f0;
+		padding: 0.3rem 0.6rem;
 		border-radius: 4px;
+		color: #4a5568;
+		font-size: 0.85rem;
 	}
 
 	.driver-control {
 		flex: 1;
 		text-align: right;
-		color: #6c757d;
+		color: #718096;
 		font-size: 0.85rem;
 	}
 
+	/* Responsive adjustments */
 	@media (max-width: 768px) {
+		.dashboard-content {
+			padding: 1rem;
+		}
+
 		.map-view {
-			height: 300px;
+			height: 50vh;
+			min-height: 350px;
+		}
+
+		.badge-container {
+			gap: 0.5rem;
+			font-size: 0.8rem;
+		}
+
+		.user-badge {
+			padding: 0.3rem 0.6rem;
+		}
+
+		.driver-item {
+			flex-direction: column;
+			align-items: flex-start;
+			gap: 0.5rem;
+		}
+
+		.driver-placa, .driver-control {
+			text-align: left;
+			width: 100%;
+		}
+	}
+
+	@media (max-width: 480px) {
+		.map-controls {
+			flex-direction: column;
+		}
+
+		.map-btn {
+			width: 100%;
+			justify-content: center;
+		}
+
+		.map-view {
+			height: 45vh;
+			min-height: 300px;
+		}
+
+		.nav-user {
+			flex-direction: column;
+			align-items: flex-start;
+			gap: 0.5rem;
 		}
 	}
 </style>
