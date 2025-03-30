@@ -4,6 +4,7 @@
 	import { browser } from '$app/environment';
 	import { supabase } from '../../../../components/supabase';
 	import Lock from '../../../../components/lock.svelte';
+	import type { Session } from '@supabase/supabase-js';
 
 	type Conductor = {
 		id: number;
@@ -51,10 +52,10 @@
 
 	// Stores
 	const conductor = writable<Conductor | null>(null);
-	const estadoActual = writable<string>('Descanso');
+	const estadoActual = writable<string>('descanso');
 	const error = writable<string>('');
 	const isLoading = writable<boolean>(false);
-	const session = writable<any>(null);
+	const session = writable<Session | null>(null);
 	const trackingActive = writable<boolean>(false);
 	const positionHistory = writable<PosicionConductor[]>([]);
 	const otherDrivers = writable<Conductor[]>([]);
@@ -69,10 +70,10 @@
 
 	// Variables reactivas
 	let conductorData: Conductor | null = null;
-	let currentEstado: string = 'Descanso';
+	let currentEstado: string = 'descanso';
 	let errorMessage: string = '';
 	let loading: boolean = false;
-	let currentSession: any = null;
+	let currentSession: Session | null = null;
 	let map: any = null;
 	let userMarker: any = null;
 	let otherMarkers: Record<number, any> = {};
@@ -176,7 +177,6 @@
 			console.error('Error guardando posición:', err);
 		}
 	};
-
 
 	const getCurrentPosition = () => {
 		if (!browser) return;
@@ -288,6 +288,7 @@
 				.limit(50);
 
 			if (sbError) throw sbError;
+			if (!data) return;
 
 			const uniqueDrivers = data.reduce((acc: any[], current) => {
 				if (!acc.some((item) => item.conductor_id === current.conductor_id)) {
@@ -332,7 +333,7 @@
 		}
 	};
 
-	const getSession = async () => {
+	const getSession = async (): Promise<Session | null> => {
 		const { data, error } = await supabase.auth.getSession();
 		if (error) {
 			console.error('Error obteniendo sesión:', error);
@@ -379,6 +380,8 @@
 				.from('estado_conductor')
 				.select('estado, descripcion')
 				.eq('conductor_id', conductorId)
+				.order('created_at', { ascending: false })
+				.limit(1)
 				.maybeSingle();
 
 			if (sbError) throw sbError;
@@ -388,161 +391,213 @@
 				return data.estado;
 			}
 
-			estadoActual.set('Descanso');
-			return 'Descanso';
+			estadoActual.set('descanso');
+			return 'descanso';
 		} catch (err) {
 			console.error('Error obteniendo estado:', err);
 			error.set('Error al cargar estado actual');
-			return 'Descanso';
+			return 'descanso';
 		}
 	};
 
 	const loadDriverStatus = async () => {
-  loadingStatus.set(true);
-  try {
-    // 1. Consulta directa a la tabla conductores con su estado actual
-    const { data: conductores, error: conductoresError } = await supabase
-      .from('conductor')
-      .select(`
-        id,
-        nombre,
-        placa,
-        email,
-        control,
-        propiedad,
-        telefono,
-        estado_actual:estado_conductor!inner(estado)
-      `)
-      .order('created_at', { foreignTable: 'estado_conductor', ascending: false });
+		loadingStatus.set(true);
+		try {
+			const { data: conductores, error: conductoresError } = await supabase
+				.from('conductor')
+				.select(`
+					id,
+					nombre,
+					placa,
+					email,
+					control,
+					propiedad,
+					telefono,
+					estado_actual:estado_conductor!inner(estado)
+				`)
+				.order('created_at', { foreignTable: 'estado_conductor', ascending: false });
 
-    if (conductoresError) throw conductoresError;
-    if (!conductores) throw new Error('No se encontraron conductores');
+			if (conductoresError) throw conductoresError;
+			if (!conductores) throw new Error('No se encontraron conductores');
 
-    // 2. Procesamiento de datos
-    const statusData: DriverStatus = {
-      en_servicio: [],
-      ruta_colon_urena: [],
-      ruta_urena_colon: [],
-      accidentado: [],
-      descanso: []
-    };
+			const statusData: DriverStatus = {
+				en_servicio: [],
+				ruta_colon_urena: [],
+				ruta_urena_colon: [],
+				accidentado: [],
+				descanso: []
+			};
 
-    conductores.forEach(conductor => {
-      // Verificar si tiene estado definido
-      const estado = conductor.estado_actual?.[0]?.estado || 'descanso';
-      
-      const conductorConEstado: Conductor = {
-        ...conductor,
-        estado: estado as 'en_servicio' | 'ruta_colon_urena' | 'ruta_urena_colon' | 'accidentado' | 'descanso'
-      };
+			conductores.forEach(conductor => {
+				const estado = conductor.estado_actual?.[0]?.estado || 'descanso';
+				
+				const conductorConEstado: Conductor = {
+					...conductor,
+					estado: estado as 'en_servicio' | 'ruta_colon_urena' | 'ruta_urena_colon' | 'accidentado' | 'descanso'
+				};
 
-      // Agrupar por estado
-      switch (estado) {
-        case 'en_servicio':
-          statusData.en_servicio.push(conductorConEstado);
-          break;
-        case 'ruta_colon_urena':
-          statusData.ruta_colon_urena.push(conductorConEstado);
-          break;
-        case 'ruta_urena_colon':
-          statusData.ruta_urena_colon.push(conductorConEstado);
-          break;
-        case 'accidentado':
-          statusData.accidentado.push(conductorConEstado);
-          break;
-        case 'descanso':
-          statusData.descanso.push(conductorConEstado);
-          break;
-        default:
-          statusData.descanso.push(conductorConEstado);
-      }
-    });
+				switch (estado) {
+					case 'en_servicio':
+						statusData.en_servicio.push(conductorConEstado);
+						break;
+					case 'ruta_colon_urena':
+						statusData.ruta_colon_urena.push(conductorConEstado);
+						break;
+					case 'ruta_urena_colon':
+						statusData.ruta_urena_colon.push(conductorConEstado);
+						break;
+					case 'accidentado':
+						statusData.accidentado.push(conductorConEstado);
+						break;
+					default:
+						statusData.descanso.push(conductorConEstado);
+				}
+			});
 
-    driverStatusStore.set(statusData);
-  } catch (error) {
-    console.error('Error al cargar estados:', error);
-    
-  } finally {
-    loadingStatus.set(false);
-  }
+			driverStatusStore.set(statusData);
+		} catch (error) {
+			console.error('Error al cargar estados:', error);
+			driverStatusStore.set({
+				en_servicio: [],
+				ruta_colon_urena: [],
+				ruta_urena_colon: [],
+				accidentado: [],
+				descanso: []
+			});
+		} finally {
+			loadingStatus.set(false);
+		}
+	};
+
+	const setupSubscriptions = async () => {
+    try {
+        // Suscripción a cambios de autenticación
+        const { data: authData } = supabase.auth.onAuthStateChange(async (event, supabaseSession) => {
+            if (supabaseSession) {
+                session.set(supabaseSession);  // Use the store's set method
+            }
+
+            if (event === 'SIGNED_IN') {
+                await obtenerConductor();
+                await loadDriverStatus();
+                if (conductorData) {
+                    getCurrentPosition();
+                    await getOtherDrivers();
+                }
+            } else if (event === 'SIGNED_OUT') {
+                conductor.set(null);
+                estadoActual.set('descanso');
+                stopTracking();
+            }
+        });
+
+        // Suscripción a cambios en tiempo real
+        const channel = supabase
+            .channel('conductor_updates')
+            .on(
+                'postgres_changes',
+                {
+                    event: '*',
+                    schema: 'public',
+                    table: 'conductor_posiciones',
+                },
+                async (payload) => {
+                    if (payload.new && 'conductor_id' in payload.new && payload.new.conductor_id !== conductorData?.id) {
+                        await getOtherDrivers();
+                    }
+                }
+            )
+            .on(
+                'postgres_changes',
+                {
+                    event: '*',
+                    schema: 'public',
+                    table: 'estado_conductor',
+                },
+                async (payload) => {
+                    await loadDriverStatus();
+                    if (payload.new && 'conductor_id' in payload.new && payload.new.conductor_id === conductorData?.id && 'estado' in payload.new) {
+                        estadoActual.set(payload.new.estado as string);
+                    }
+                }
+            )
+            .subscribe();
+
+        return { authSubscription: authData.subscription, realtimeSubscription: channel };
+    } catch (error) {
+        console.error('Error configurando suscripciones:', error);
+        return { authSubscription: null, realtimeSubscription: null };
+    }
 };
 
 	onMount(() => {
-		(async () => {
-			try {
-				await getSession();
-				await obtenerConductor();
-				await initMap();
-				await loadDriverStatus();
-			} catch (error) {
-				console.error('Error durante la inicialización:', error);
-			}
-		})();
+    // Store references for cleanup
+    let updateInterval: NodeJS.Timeout;
+    let authSubscription: { unsubscribe: () => void } | null = null;
+    let realtimeSubscription: any = null;
 
-		let authSubscription: { unsubscribe: () => void } | null = null;
-		let realtimeSubscription: { unsubscribe: () => void } | null = null;
+    const initialize = async () => {
+        try {
+            // 1. First get session
+            await getSession();
+            
+            // Small delay to ensure session is established
+            await new Promise(resolve => setTimeout(resolve, 50));
 
-		const setupSubscriptions = () => {
-			try {
-				const authData = supabase.auth.onAuthStateChange((event, session) => {
-					if (event === 'SIGNED_IN') {
-						obtenerConductor();
-						loadDriverStatus();
-					} else if (event === 'SIGNED_OUT') {
-						conductor.set(null);
-						estadoActual.set('Descanso');
-						stopTracking();
-					}
-				});
-				authSubscription = authData.data?.subscription || null;
+            // 2. Get driver data
+            await obtenerConductor();
 
-				const channel = supabase.channel('public:conductor_posiciones').on(
-					'postgres_changes',
-					{
-						event: 'INSERT',
-						schema: 'public',
-						table: 'conductor_posiciones'
-					},
-					(payload) => {
-						if (payload.new.conductor_id !== conductorData?.id) {
-							getOtherDrivers();
-						}
-					}
-				);
-				realtimeSubscription = channel.subscribe();
-			} catch (error) {
-				console.error('Error configurando suscripciones:', error);
-			}
-		};
+            // 3. Initialize map and load status in parallel
+            await Promise.all([initMap(), loadDriverStatus()]);
 
-		setupSubscriptions();
+            // 4. Set up subscriptions
+            const subscriptions = await setupSubscriptions();
+            authSubscription = subscriptions.authSubscription;
+            realtimeSubscription = subscriptions.realtimeSubscription;
 
-		const interval = setInterval(() => {
-			try {
-				getOtherDrivers();
-				loadDriverStatus();
-			} catch (error) {
-				console.error('Error en la actualización del intervalo:', error);
-			}
-		}, 30000);
+            // 5. Get initial position and other drivers
+            if (conductorData) {
+                getCurrentPosition();
+                await getOtherDrivers();
+            }
 
-		try {
-			getOtherDrivers();
-		} catch (error) {
-			console.error('Error obteniendo otros conductores:', error);
-		}
+            // 6. Set up update interval
+            updateInterval = setInterval(async () => {
+                try {
+                    await getOtherDrivers();
+                    await loadDriverStatus();
+                } catch (error) {
+                    console.error('Error in update interval:', error);
+                }
+            }, 30000);
 
-		return () => {
-			clearInterval(interval);
-			try {
-				authSubscription?.unsubscribe();
-				realtimeSubscription?.unsubscribe();
-				stopTracking();
-			} catch (error) {
-				console.error('Error durante la limpieza:', error);
-			}
-		};
-	});
+        } catch (error) {
+            console.error('Initialization error:', error);
+        }
+    };
+
+    // Start initialization
+    initialize();
+
+    // Return synchronous cleanup function
+    return () => {
+        clearInterval(updateInterval);
+        stopTracking();
+        
+        if (authSubscription) {
+            authSubscription.unsubscribe();
+        }
+        
+        if (realtimeSubscription) {
+            supabase.removeChannel(realtimeSubscription);
+        }
+
+        if (map) {
+            map.remove();
+            map = null;
+        }
+    };
+});
 
 	onDestroy(() => {
 		if (!browser) return;
@@ -553,7 +608,6 @@
 		}
 	});
 </script>
-
 <svelte:head>
 	<link
 		rel="stylesheet"
