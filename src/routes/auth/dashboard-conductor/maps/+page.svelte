@@ -694,6 +694,7 @@
 					<span class="user-badge">{conductorData.propiedad}: {conductorData.nombre}</span>
 					<span class="user-badge">Placa: {conductorData.placa}</span>
 					<a href="/auth/dashboard-conductor/maps" class="user-badge">Mapa</a>
+					<a href="/auth/dashboard-conductor/maps/admin" class="user-badge">Admin</a>
 					<Lock />
 				</div>
 			{:else}
