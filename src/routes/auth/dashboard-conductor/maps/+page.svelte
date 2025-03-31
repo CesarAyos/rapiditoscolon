@@ -14,7 +14,13 @@
 		control: string;
 		propiedad: string;
 		telefono?: string | null;
-		estado?: 'en_servicio' | 'ruta_colon_urena' | 'ruta_urena_colon' | 'accidentado' | 'descanso';
+		estado?:
+			| 'en_servicio_colon'
+			| 'en_servicio_ureña'
+			| 'en_ruta_colon_ureña'
+			| 'en_ruta_ureña_colon'
+			| 'accidentado'
+			| 'descanso';
 	};
 
 	type PosicionConductor = {
@@ -28,9 +34,10 @@
 	};
 
 	type DriverStatus = {
-		en_servicio: Conductor[];
-		ruta_colon_urena: Conductor[];
-		ruta_urena_colon: Conductor[];
+		en_servicio_colon: Conductor[];
+		en_servicio_ureña: Conductor[];
+		en_ruta_colon_ureña: Conductor[];
+		en_ruta_ureña_colon: Conductor[];
 		accidentado: Conductor[];
 		descanso: Conductor[];
 	};
@@ -46,7 +53,13 @@
 	}
 
 	interface EstadoConductorResponse {
-		estado: 'en_servicio' | 'ruta_colon_urena' | 'ruta_urena_colon' | 'accidentado' | 'descanso';
+		estado:
+			| 'en_servicio_colon'
+			| 'en_servicio_ureña'
+			| 'en_ruta_colon_ureña'
+			| 'en_ruta_ureña_colon'
+			| 'accidentado'
+			| 'descanso';
 		conductor: ConductorFromDB;
 	}
 
@@ -60,9 +73,10 @@
 	const positionHistory = writable<PosicionConductor[]>([]);
 	const otherDrivers = writable<Conductor[]>([]);
 	const driverStatusStore = writable<DriverStatus>({
-		en_servicio: [],
-		ruta_colon_urena: [],
-		ruta_urena_colon: [],
+		en_servicio_colon: [],
+		en_servicio_ureña: [],
+		en_ruta_colon_ureña: [],
+		en_ruta_ureña_colon: [],
 		accidentado: [],
 		descanso: []
 	});
@@ -84,9 +98,10 @@
 	let history: PosicionConductor[] = [];
 	let L: any = null;
 	let driverStatusData: DriverStatus = {
-		en_servicio: [],
-		ruta_colon_urena: [],
-		ruta_urena_colon: [],
+		en_servicio_colon: [],
+		en_servicio_ureña: [],
+		en_ruta_colon_ureña: [],
+		en_ruta_ureña_colon: [],
 		accidentado: [],
 		descanso: []
 	};
@@ -403,201 +418,213 @@
 	const loadDriverStatus = async () => {
 		loadingStatus.set(true);
 		try {
-			const { data: conductores, error: conductoresError } = await supabase
-				.from('conductor')
-				.select(`
-					id,
-					nombre,
-					placa,
-					email,
-					control,
-					propiedad,
-					telefono,
-					estado_actual:estado_conductor!inner(estado)
-				`)
-				.order('created_at', { foreignTable: 'estado_conductor', ascending: false });
+			// Primero obtenemos los últimos estados de cada conductor
+			const { data: ultimosEstados, error: estadosError } = await supabase
+				.from('estado_conductor')
+				.select(
+					`
+                conductor_id,
+                estado,
+                conductor:conductor_id(id, nombre, placa, email, control, propiedad, telefono)
+            `
+				)
+				.order('created_at', { ascending: false });
 
-			if (conductoresError) throw conductoresError;
-			if (!conductores) throw new Error('No se encontraron conductores');
+			if (estadosError) throw estadosError;
+			if (!ultimosEstados) throw new Error('No se encontraron estados');
+
+			// Agrupamos por conductor (para quedarnos con el último estado de cada uno)
+			const conductoresPorId = ultimosEstados.reduce((acc, current) => {
+				if (!acc.has(current.conductor_id)) {
+					acc.set(current.conductor_id, {
+						...current.conductor,
+						estado: current.estado
+					});
+				}
+				return acc;
+			}, new Map<number, any>());
+
+			const conductores = Array.from(conductoresPorId.values());
 
 			const statusData: DriverStatus = {
-				en_servicio: [],
-				ruta_colon_urena: [],
-				ruta_urena_colon: [],
+				en_servicio_colon: [],
+				en_servicio_ureña: [],
+				en_ruta_colon_ureña: [],
+				en_ruta_ureña_colon: [],
 				accidentado: [],
 				descanso: []
 			};
 
-			conductores.forEach(conductor => {
-				const estado = conductor.estado_actual?.[0]?.estado || 'descanso';
-				
-				const conductorConEstado: Conductor = {
-					...conductor,
-					estado: estado as 'en_servicio' | 'ruta_colon_urena' | 'ruta_urena_colon' | 'accidentado' | 'descanso'
-				};
+			conductores.forEach((conductor) => {
+				const estado = conductor.estado || 'descanso';
 
 				switch (estado) {
-					case 'en_servicio':
-						statusData.en_servicio.push(conductorConEstado);
+					case 'en_servicio_colon':
+						statusData.en_servicio_colon.push(conductor);
 						break;
-					case 'ruta_colon_urena':
-						statusData.ruta_colon_urena.push(conductorConEstado);
+					case 'en_servicio_ureña':
+						statusData.en_servicio_ureña.push(conductor);
 						break;
-					case 'ruta_urena_colon':
-						statusData.ruta_urena_colon.push(conductorConEstado);
+					case 'en_ruta_colon_ureña':
+						statusData.en_ruta_colon_ureña.push(conductor);
+						break;
+					case 'en_ruta_ureña_colon':
+						statusData.en_ruta_ureña_colon.push(conductor);
 						break;
 					case 'accidentado':
-						statusData.accidentado.push(conductorConEstado);
+						statusData.accidentado.push(conductor);
 						break;
 					default:
-						statusData.descanso.push(conductorConEstado);
+						statusData.descanso.push(conductor);
 				}
 			});
 
 			driverStatusStore.set(statusData);
 		} catch (error) {
 			console.error('Error al cargar estados:', error);
-			driverStatusStore.set({
-				en_servicio: [],
-				ruta_colon_urena: [],
-				ruta_urena_colon: [],
-				accidentado: [],
-				descanso: []
-			});
+			// Manejo del error...
 		} finally {
 			loadingStatus.set(false);
 		}
 	};
 
 	const setupSubscriptions = async () => {
-    try {
-        // Suscripción a cambios de autenticación
-        const { data: authData } = supabase.auth.onAuthStateChange(async (event, supabaseSession) => {
-            if (supabaseSession) {
-                session.set(supabaseSession);  // Use the store's set method
-            }
+		try {
+			// Suscripción a cambios de autenticación
+			const { data: authData } = supabase.auth.onAuthStateChange(async (event, supabaseSession) => {
+				if (supabaseSession) {
+					session.set(supabaseSession); // Use the store's set method
+				}
 
-            if (event === 'SIGNED_IN') {
-                await obtenerConductor();
-                await loadDriverStatus();
-                if (conductorData) {
-                    getCurrentPosition();
-                    await getOtherDrivers();
-                }
-            } else if (event === 'SIGNED_OUT') {
-                conductor.set(null);
-                estadoActual.set('descanso');
-                stopTracking();
-            }
-        });
+				if (event === 'SIGNED_IN') {
+					await obtenerConductor();
+					await loadDriverStatus();
+					if (conductorData) {
+						getCurrentPosition();
+						await getOtherDrivers();
+					}
+				} else if (event === 'SIGNED_OUT') {
+					conductor.set(null);
+					estadoActual.set('descanso');
+					stopTracking();
+				}
+			});
 
-        // Suscripción a cambios en tiempo real
-        const channel = supabase
-            .channel('conductor_updates')
-            .on(
-                'postgres_changes',
-                {
-                    event: '*',
-                    schema: 'public',
-                    table: 'conductor_posiciones',
-                },
-                async (payload) => {
-                    if (payload.new && 'conductor_id' in payload.new && payload.new.conductor_id !== conductorData?.id) {
-                        await getOtherDrivers();
-                    }
-                }
-            )
-            .on(
-                'postgres_changes',
-                {
-                    event: '*',
-                    schema: 'public',
-                    table: 'estado_conductor',
-                },
-                async (payload) => {
-                    await loadDriverStatus();
-                    if (payload.new && 'conductor_id' in payload.new && payload.new.conductor_id === conductorData?.id && 'estado' in payload.new) {
-                        estadoActual.set(payload.new.estado as string);
-                    }
-                }
-            )
-            .subscribe();
+			// Suscripción a cambios en tiempo real
+			const channel = supabase
+				.channel('conductor_updates')
+				.on(
+					'postgres_changes',
+					{
+						event: '*',
+						schema: 'public',
+						table: 'conductor_posiciones'
+					},
+					async (payload) => {
+						if (
+							payload.new &&
+							'conductor_id' in payload.new &&
+							payload.new.conductor_id !== conductorData?.id
+						) {
+							await getOtherDrivers();
+						}
+					}
+				)
+				.on(
+					'postgres_changes',
+					{
+						event: '*',
+						schema: 'public',
+						table: 'estado_conductor'
+					},
+					async (payload) => {
+						await loadDriverStatus();
+						if (
+							payload.new &&
+							'conductor_id' in payload.new &&
+							payload.new.conductor_id === conductorData?.id &&
+							'estado' in payload.new
+						) {
+							estadoActual.set(payload.new.estado as string);
+						}
+					}
+				)
+				.subscribe();
 
-        return { authSubscription: authData.subscription, realtimeSubscription: channel };
-    } catch (error) {
-        console.error('Error configurando suscripciones:', error);
-        return { authSubscription: null, realtimeSubscription: null };
-    }
-};
+			return { authSubscription: authData.subscription, realtimeSubscription: channel };
+		} catch (error) {
+			console.error('Error configurando suscripciones:', error);
+			return { authSubscription: null, realtimeSubscription: null };
+		}
+	};
 
 	onMount(() => {
-    // Store references for cleanup
-    let updateInterval: NodeJS.Timeout;
-    let authSubscription: { unsubscribe: () => void } | null = null;
-    let realtimeSubscription: any = null;
+		// Store references for cleanup
+		let updateInterval: NodeJS.Timeout;
+		let authSubscription: { unsubscribe: () => void } | null = null;
+		let realtimeSubscription: any = null;
 
-    const initialize = async () => {
-        try {
-            // 1. First get session
-            await getSession();
-            
-            // Small delay to ensure session is established
-            await new Promise(resolve => setTimeout(resolve, 50));
+		const initialize = async () => {
+			try {
+				// 1. First get session
+				await getSession();
 
-            // 2. Get driver data
-            await obtenerConductor();
+				// Small delay to ensure session is established
+				await new Promise((resolve) => setTimeout(resolve, 50));
 
-            // 3. Initialize map and load status in parallel
-            await Promise.all([initMap(), loadDriverStatus()]);
+				// 2. Get driver data
+				await obtenerConductor();
 
-            // 4. Set up subscriptions
-            const subscriptions = await setupSubscriptions();
-            authSubscription = subscriptions.authSubscription;
-            realtimeSubscription = subscriptions.realtimeSubscription;
+				// 3. Initialize map and load status in parallel
+				await Promise.all([initMap(), loadDriverStatus()]);
 
-            // 5. Get initial position and other drivers
-            if (conductorData) {
-                getCurrentPosition();
-                await getOtherDrivers();
-            }
+				// 4. Set up subscriptions
+				const subscriptions = await setupSubscriptions();
+				authSubscription = subscriptions.authSubscription;
+				realtimeSubscription = subscriptions.realtimeSubscription;
 
-            // 6. Set up update interval
-            updateInterval = setInterval(async () => {
-                try {
-                    await getOtherDrivers();
-                    await loadDriverStatus();
-                } catch (error) {
-                    console.error('Error in update interval:', error);
-                }
-            }, 30000);
+				// 5. Get initial position and other drivers
+				if (conductorData) {
+					getCurrentPosition();
+					await getOtherDrivers();
+				}
 
-        } catch (error) {
-            console.error('Initialization error:', error);
-        }
-    };
+				// 6. Set up update interval
+				updateInterval = setInterval(async () => {
+					try {
+						await getOtherDrivers();
+						await loadDriverStatus();
+					} catch (error) {
+						console.error('Error in update interval:', error);
+					}
+				}, 30000);
+			} catch (error) {
+				console.error('Initialization error:', error);
+			}
+		};
 
-    // Start initialization
-    initialize();
+		// Start initialization
+		initialize();
 
-    // Return synchronous cleanup function
-    return () => {
-        clearInterval(updateInterval);
-        stopTracking();
-        
-        if (authSubscription) {
-            authSubscription.unsubscribe();
-        }
-        
-        if (realtimeSubscription) {
-            supabase.removeChannel(realtimeSubscription);
-        }
+		// Return synchronous cleanup function
+		return () => {
+			clearInterval(updateInterval);
+			stopTracking();
 
-        if (map) {
-            map.remove();
-            map = null;
-        }
-    };
-});
+			if (authSubscription) {
+				authSubscription.unsubscribe();
+			}
+
+			if (realtimeSubscription) {
+				supabase.removeChannel(realtimeSubscription);
+			}
+
+			if (map) {
+				map.remove();
+				map = null;
+			}
+		};
+	});
 
 	onDestroy(() => {
 		if (!browser) return;
@@ -609,9 +636,10 @@
 	});
 
 	const recargarPagina = () => {
-        window.location.reload();
-    };
+		window.location.reload();
+	};
 </script>
+
 <svelte:head>
 	<link
 		rel="stylesheet"
@@ -637,9 +665,7 @@
 			{/if}
 		</div>
 	</nav>
-	<button on:click={recargarPagina} class="reload-btn">
-		↻ Recargar
-	</button>
+	<button on:click={recargarPagina} class="reload-btn mt-2 btn btn-info"> ↻ Recargar para ver estado de conductores </button>
 	<main class="dashboard-content">
 		<div class="content-wrapper">
 			<div class="map-controls">
@@ -694,87 +720,100 @@
 </div>
 
 <div class="status-section">
-    <div class="status-header">
-      <h2>Estado de Conductores</h2>
-      <button on:click={loadDriverStatus} class="refresh-btn">
-        <!-- Icono SVG... -->
-        Actualizar
-      </button>
-    </div>
-  
-    {#if loadingDriverStatus}
-      <div class="loading-spinner">
-        <div class="spinner"></div>
-      </div>
-    {:else}
-      <div class="status-grid">
-        <div class="status-card">
-          <h3>En Servicio</h3>
-          {#each driverStatusData.en_servicio as driver}
-            <div class="driver-status-item">
-              <span class="driver-name">{driver.nombre}</span>
-              <span class="driver-placa">{driver.placa}</span>
-              <span class="driver-placa">control:{driver.control}</span>
-            </div>
-          {:else}
-            <p class="no-drivers">No hay conductores en servicio</p>
-          {/each}
-        </div>
-  
-        <div class="status-card">
-          <h3>Ruta Colón - Ureña</h3>
-          {#each driverStatusData.ruta_colon_urena as driver}
-            <div class="driver-status-item">
-              <span class="driver-name">{driver.nombre}</span>
-              <span class="driver-placa">{driver.placa}</span>
-              <span class="driver-placa">control:{driver.control}</span>
-            </div>
-          {:else}
-            <p class="no-drivers">No hay conductores en esta ruta</p>
-          {/each}
-        </div>
-  
-        <div class="status-card">
-          <h3>Ruta Ureña - Colón</h3>
-          {#each driverStatusData.ruta_urena_colon as driver}
-            <div class="driver-status-item">
-              <span class="driver-name">{driver.nombre}</span>
-              <span class="driver-placa">{driver.placa}</span>
-              <span class="driver-placa">control:{driver.control}</span>s
-            </div>
-          {:else}
-            <p class="no-drivers">No hay conductores en esta ruta</p>
-          {/each}
-        </div>
-  
-        <div class="status-card">
-          <h3>Accidentados</h3>
-          {#each driverStatusData.accidentado as driver}
-            <div class="driver-status-item">
-              <span class="driver-name">{driver.nombre}</span>
-              <span class="driver-placa">{driver.placa}</span>
-              <span class="driver-placa">control:{driver.control}</span>
-            </div>
-          {:else}
-            <p class="no-drivers">No hay conductores accidentados</p>
-          {/each}
-        </div>
-  
-        <div class="status-card">
-          <h3>En Descanso</h3>
-          {#each driverStatusData.descanso as driver}
-            <div class="driver-status-item">
-              <span class="driver-name">{driver.nombre}</span>
-              <span class="driver-placa">{driver.placa}</span>
-              <span class="driver-placa">control:{driver.control}</span>
-            </div>
-          {:else}
-            <p class="no-drivers">No hay conductores en descanso</p>
-          {/each}
-        </div>
-      </div>
-    {/if}
-  </div>
+	<div class="status-header">
+		<h2>Estado de Conductores</h2>
+		<button on:click={loadDriverStatus} class="refresh-btn">
+			<!-- Icono SVG... -->
+			Actualizar
+		</button>
+	</div>
+
+	{#if loadingDriverStatus}
+		<div class="loading-spinner">
+			<div class="spinner"></div>
+		</div>
+	{:else}
+		<div class="status-grid">
+			<div class="status-card">
+				<h3>En servicio Colón</h3>
+				{#each driverStatusData.en_servicio_colon as driver}
+					<div class="driver-status-item">
+						<span class="driver-name">{driver.nombre}</span>
+						<span class="driver-placa">{driver.placa}</span>
+						<span class="driver-placa">control:{driver.control}</span>
+					</div>
+				{:else}
+					<p class="no-drivers">No hay conductores en esta ruta</p>
+				{/each}
+			</div>
+
+			<div class="status-card">
+				<h3>En servicio Ureña</h3>
+				{#each driverStatusData.en_servicio_ureña as driver}
+					<div class="driver-status-item">
+						<span class="driver-name">{driver.nombre}</span>
+						<span class="driver-placa">{driver.placa}</span>
+						<span class="driver-placa">control:{driver.control}</span>
+					</div>
+				{:else}
+					<p class="no-drivers">No hay conductores en esta ruta</p>
+				{/each}
+			</div>
+
+			<div class="status-card">
+				<h3>Ruta Colón - Ureña</h3>
+				{#each driverStatusData.en_ruta_colon_ureña as driver}
+					<div class="driver-status-item">
+						<span class="driver-name">{driver.nombre}</span>
+						<span class="driver-placa">{driver.placa}</span>
+						<span class="driver-placa">control:{driver.control}</span>s
+					</div>
+				{:else}
+					<p class="no-drivers">No hay conductores en esta ruta</p>
+				{/each}
+			</div>
+
+			<div class="status-card">
+				<h3>Ruta Ureña - Colón</h3>
+				{#each driverStatusData.en_ruta_ureña_colon as driver}
+					<div class="driver-status-item">
+						<span class="driver-name">{driver.nombre}</span>
+						<span class="driver-placa">{driver.placa}</span>
+						<span class="driver-placa">control:{driver.control}</span>s
+					</div>
+				{:else}
+					<p class="no-drivers">No hay conductores en esta ruta</p>
+				{/each}
+			</div>
+
+			<div class="status-card">
+				<h3>Accidentados</h3>
+				{#each driverStatusData.accidentado as driver}
+					<div class="driver-status-item">
+						<span class="driver-name">{driver.nombre}</span>
+						<span class="driver-placa">{driver.placa}</span>
+						<span class="driver-placa">control:{driver.control}</span>
+					</div>
+				{:else}
+					<p class="no-drivers">No hay conductores accidentados</p>
+				{/each}
+			</div>
+
+			<div class="status-card">
+				<h3>En Descanso</h3>
+				{#each driverStatusData.descanso as driver}
+					<div class="driver-status-item">
+						<span class="driver-name">{driver.nombre}</span>
+						<span class="driver-placa">{driver.placa}</span>
+						<span class="driver-placa">control:{driver.control}</span>
+					</div>
+				{:else}
+					<p class="no-drivers">No hay conductores en descanso</p>
+				{/each}
+			</div>
+		</div>
+	{/if}
+</div>
 
 <style>
 	.dashboard-container {
@@ -1078,7 +1117,6 @@
 		transform: translateY(-1px);
 	}
 
-
 	@keyframes spin {
 		from {
 			transform: rotate(0deg);
@@ -1165,6 +1203,4 @@
 			justify-content: center;
 		}
 	}
-
-	
 </style>

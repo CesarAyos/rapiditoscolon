@@ -31,7 +31,7 @@
 
 	// Variables reactivas
 	let conductorData: Conductor | null = null;
-	let currentEstado: string = 'Descanso';
+	let currentEstado: string = '';
 	let errorMessage: string = '';
 	let loading: boolean = false;
 	let currentSession: any = null;
@@ -222,43 +222,52 @@
 					<div class="actions-grid">
 						<button 
 							type="button"
-							on:click={() => cambiarEstado('En servicio')} 
+							on:click={() => cambiarEstado('en_servicio_colon', 'Ubicación: Colón')} 
 							class="action-btn service"
 						>
 							<span class="icon">🚕</span>
-							<span class="label">En Servicio</span>
+							<span class="label">En Servicio Colón</span>
 						</button>
-
+				
 						<button 
 							type="button"
-							on:click={() => cambiarEstado('Descanso')} 
+							on:click={() => cambiarEstado('en_servicio_ureña', 'Ubicación: Ureña')} 
+							class="action-btn service"
+						>
+							<span class="icon">🚕</span>
+							<span class="label">En Servicio Ureña</span>
+						</button>
+				
+						<button 
+							type="button"
+							on:click={() => cambiarEstado('descanso')} 
 							class="action-btn rest"
 						>
 							<span class="icon">🛌</span>
 							<span class="label">Descanso</span>
 						</button>
-
+				
 						<button
 							type="button"
-							on:click={() => cambiarEstado('En ruta', 'Ruta: Colón → Ureña')}
+							on:click={() => cambiarEstado('en_ruta_colon ureña', 'Ruta: Colón → Ureña')}
 							class="action-btn route"
 						>
 							<span class="icon">🛣️</span>
 							<span class="label">Colón → Ureña</span>
 						</button>
-
+				
 						<button
 							type="button"
-							on:click={() => cambiarEstado('En ruta', 'Ruta: Ureña → Colón')}
+							on:click={() => cambiarEstado('en_ruta_ureña_colon', 'Ruta: Ureña → Colón')}
 							class="action-btn route"
 						>
 							<span class="icon">🛣️</span>
 							<span class="label">Ureña → Colón</span>
 						</button>
-
+				
 						<button
 							type="button"
-							on:click={() => cambiarEstado('Accidentado')}
+							on:click={() => cambiarEstado('accidentado')}
 							class="action-btn accident"
 						>
 							<span class="icon">⚠️</span>
@@ -587,3 +596,41 @@
 		}
 	}
 </style>
+
+<!-- 
+BEGIN;
+-- 1. Crear columna temporal
+ALTER TABLE estado_conductor ADD COLUMN estado_temp TEXT;
+
+-- 2. Copiar y transformar datos
+UPDATE estado_conductor 
+SET estado_temp = CASE 
+    WHEN estado = 'En servicio colon' THEN 'servicio colon'
+    WHEN estado = 'En servicio ureña' THEN 'servicio ureña'
+    WHEN estado = 'En ruta' THEN 'en ruta colon ureña'
+    ELSE 'descanso'
+END;
+
+-- 3. Eliminar constraint existente
+ALTER TABLE estado_conductor DROP CONSTRAINT estado_conductor_estado_check;
+
+-- 4. Actualizar columna original
+UPDATE estado_conductor SET estado = estado_temp;
+
+-- 5. Añadir nueva constraint
+ALTER TABLE estado_conductor 
+ADD CONSTRAINT estado_conductor_estado_check 
+CHECK (estado IN (
+    'descanso',
+    'servicio colon',
+    'servicio ureña',
+    'en ruta colon ureña',
+    'en ruta ureña colon',
+    'accidentado'
+));
+
+-- 6. Eliminar columna temporal
+ALTER TABLE estado_conductor DROP COLUMN estado_temp;
+COMMIT;
+
+para modificar los estados -->
