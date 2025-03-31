@@ -23,6 +23,7 @@
 	let propiedad = '';
 	let control = '';
 	let email = '';
+	let telefono = '';
 	let marca = '';
 	let aceptaTerminos = false;
 	let showPassword = false;
@@ -141,6 +142,18 @@
 				id="control"
 				type="number"
 				bind:value={control}
+				placeholder="Ej: 12345"
+				required
+			  />
+			  <div class="underline"></div>
+			</div>
+
+			<div class="form-group">
+			  <label for="control">Telefono</label>
+			  <input
+				id="telefono"
+				type="number"
+				bind:value={telefono}
 				placeholder="Ej: 12345"
 				required
 			  />

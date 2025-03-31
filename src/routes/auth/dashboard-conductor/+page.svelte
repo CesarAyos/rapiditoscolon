@@ -249,7 +249,7 @@
 				
 						<button
 							type="button"
-							on:click={() => cambiarEstado('en_ruta_colon ureña', 'Ruta: Colón → Ureña')}
+							on:click={() => cambiarEstado('en_ruta_colon_ureña', 'Ruta: Colón → Ureña')}
 							class="action-btn route"
 						>
 							<span class="icon">🛣️</span>
