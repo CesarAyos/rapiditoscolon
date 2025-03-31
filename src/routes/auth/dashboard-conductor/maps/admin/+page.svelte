@@ -6,6 +6,7 @@
 	import Lock from '../../../../../components/lock.svelte';
 	import type { Session } from '@supabase/supabase-js';
 	import type { Map, Marker } from 'leaflet';
+	import ProtectedArea from '../../../../../components/ProtectedArea.svelte';
 
 	type Conductor = {
 		id: number;
@@ -300,97 +301,99 @@
 	/>
 </svelte:head>
 
-<div class="admin-container">
-	<nav class="admin-nav">
-		<div class="nav-header">
-			<h1>Panel de Administración</h1>
-			<div class="nav-controls">
-				<Lock />
-			</div>
-		</div>
-	</nav>
-
-	<main class="admin-content">
-		<div class="content-header">
-			<h2>Monitoreo de Conductores Activos</h2>
-			<div class="controls">
-				<button on:click={getActiveDrivers} class="refresh-btn" disabled={loading}>
-					{loading ? 'Cargando...' : 'Actualizar Datos'}
-				</button>
-			</div>
-		</div>
-
-		{#if errorMessage}
-			<div class="error-message">
-				{errorMessage}
-			</div>
-		{/if}
-
-		<div class="map-container">
-			<div bind:this={mapContainer} class="map-view">
-				{#if !map}
-					<div class="map-loading">
-						<div class="spinner"></div>
-						<p>Inicializando mapa...</p>
-					</div>
-				{/if}
-			</div>
-
-			<div class="drivers-info">
-				<h3>Conductores Activos: {driversData.length}</h3>
-				<div class="status-legend">
-					<div class="legend-item">
-						<span class="legend-color" style="background-color: #3498db;"></span>
-						<span>Colón</span>
-					</div>
-					<div class="legend-item">
-						<span class="legend-color" style="background-color: #2ecc71;"></span>
-						<span>Ureña</span>
-					</div>
-					<div class="legend-item">
-						<span class="legend-color" style="background-color: #f39c12;"></span>
-						<span>Ruta C→U</span>
-					</div>
-					<div class="legend-item">
-						<span class="legend-color" style="background-color: #e74c3c;"></span>
-						<span>Ruta U→C</span>
-					</div>
-					<div class="legend-item">
-						<span class="legend-color" style="background-color: #9b59b6;"></span>
-						<span>Accidentado</span>
-					</div>
-					<div class="legend-item">
-						<span class="legend-color" style="background-color: #95a5a6;"></span>
-						<span>Descanso</span>
-					</div>
+<ProtectedArea>
+	<div class="admin-container">
+		<nav class="admin-nav">
+			<div class="nav-header">
+				<h1>Panel de Administración</h1>
+				<div class="nav-controls">
+					<Lock />
 				</div>
+			</div>
+		</nav>
 
-				<div class="drivers-list">
-					{#each driversData as driver}
-						<div
-							class="driver-card"
-							style="border-left: 4px solid {getEstadoColor(driver.estado)};"
-						>
-							<div class="driver-header">
-								<span class="driver-control">{driver.conductor.control}</span>
-								<span class="driver-status">{formatEstado(driver.estado)}</span>
-							</div>
-							<div class="driver-info">
-								<span class="driver-name">{driver.conductor.nombre}</span>
-								<span class="driver-placa">{driver.conductor.placa}</span>
-							</div>
-							<div class="driver-time">
-								{new Date(driver.timestamp).toLocaleTimeString()}
-							</div>
+		<main class="admin-content">
+			<div class="content-header">
+				<h2>Monitoreo de Conductores Activos</h2>
+				<div class="controls">
+					<button on:click={getActiveDrivers} class="refresh-btn" disabled={loading}>
+						{loading ? 'Cargando...' : 'Actualizar Datos'}
+					</button>
+				</div>
+			</div>
+
+			{#if errorMessage}
+				<div class="error-message">
+					{errorMessage}
+				</div>
+			{/if}
+
+			<div class="map-container">
+				<div bind:this={mapContainer} class="map-view">
+					{#if !map}
+						<div class="map-loading">
+							<div class="spinner"></div>
+							<p>Inicializando mapa...</p>
 						</div>
-					{:else}
-						<div class="no-drivers">No hay conductores activos en este momento</div>
-					{/each}
+					{/if}
+				</div>
+
+				<div class="drivers-info">
+					<h3>Conductores Activos: {driversData.length}</h3>
+					<div class="status-legend">
+						<div class="legend-item">
+							<span class="legend-color" style="background-color: #3498db;"></span>
+							<span>Colón</span>
+						</div>
+						<div class="legend-item">
+							<span class="legend-color" style="background-color: #2ecc71;"></span>
+							<span>Ureña</span>
+						</div>
+						<div class="legend-item">
+							<span class="legend-color" style="background-color: #f39c12;"></span>
+							<span>Ruta C→U</span>
+						</div>
+						<div class="legend-item">
+							<span class="legend-color" style="background-color: #e74c3c;"></span>
+							<span>Ruta U→C</span>
+						</div>
+						<div class="legend-item">
+							<span class="legend-color" style="background-color: #9b59b6;"></span>
+							<span>Accidentado</span>
+						</div>
+						<div class="legend-item">
+							<span class="legend-color" style="background-color: #95a5a6;"></span>
+							<span>Descanso</span>
+						</div>
+					</div>
+
+					<div class="drivers-list">
+						{#each driversData as driver}
+							<div
+								class="driver-card"
+								style="border-left: 4px solid {getEstadoColor(driver.estado)};"
+							>
+								<div class="driver-header">
+									<span class="driver-control">{driver.conductor.control}</span>
+									<span class="driver-status">{formatEstado(driver.estado)}</span>
+								</div>
+								<div class="driver-info">
+									<span class="driver-name">{driver.conductor.nombre}</span>
+									<span class="driver-placa">{driver.conductor.placa}</span>
+								</div>
+								<div class="driver-time">
+									{new Date(driver.timestamp).toLocaleTimeString()}
+								</div>
+							</div>
+						{:else}
+							<div class="no-drivers">No hay conductores activos en este momento</div>
+						{/each}
+					</div>
 				</div>
 			</div>
-		</div>
-	</main>
-</div>
+		</main>
+	</div>
+</ProtectedArea>
 
 <style>
 	.admin-container {
