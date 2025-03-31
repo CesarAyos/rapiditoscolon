@@ -154,6 +154,7 @@
         <div class="register-link">
           <!-- ¿No tienes cuenta?
           <a href="/{userType}">Regístrate como {userType}</a> -->
+          <a href="/conductor">Regístrate como conductor </a>
         </div>
       </div>
     </div>
