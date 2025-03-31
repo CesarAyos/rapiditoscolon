@@ -144,36 +144,54 @@
 	};
 
 	const updatePosition = (lat: number, lng: number, accuracy?: number) => {
-		if (!map || !conductorData || !L) return;
+    if (!map || !conductorData || !L) return;
 
-		if (!userMarker) {
-			userMarker = L.marker([lat, lng], {
-				icon: L.icon({
-					iconUrl: 'https://cdn-icons-png.flaticon.com/512/4474/4474228.png',
-					iconSize: [32, 32],
-					iconAnchor: [16, 32]
-				}),
-				zIndexOffset: 1000
-			})
-				.addTo(map)
-				.bindPopup(`<b>${conductorData.nombre}</b><br>Placa: ${conductorData.placa}`);
-		} else {
-			userMarker.setLatLng([lat, lng]);
-		}
+    if (!userMarker) {
+        userMarker = L.marker([lat, lng], {
+            icon: L.divIcon({
+                className: 'driver-marker',
+                html: `
+                    <div style="position: relative;">
+                        <img src="https://cdn-icons-png.flaticon.com/512/4474/4474228.png" 
+                             style="width: 32px; height: 32px;"/>
+                        <div style="position: absolute; 
+                                   top: -10px; 
+                                   left: 50%; 
+                                   transform: translateX(-50%);
+                                   background: white; 
+                                   border-radius: 50%; 
+                                   padding: 2px 5px;
+                                   border: 2px solid #3388ff;
+                                   font-weight: bold;
+                                   font-size: 12px;">
+                            ${conductorData.control}
+                        </div>
+                    </div>
+                `,
+                iconSize: [32, 40], // Aumentamos el tamaño para acomodar el texto
+                iconAnchor: [16, 40] // Ajustamos el punto de anclaje
+            }),
+            zIndexOffset: 1000
+        })
+        .addTo(map)
+        .bindPopup(`<b>${conductorData.nombre}</b><br>Placa: ${conductorData.placa}<br>Control: ${conductorData.control}`);
+    } else {
+        userMarker.setLatLng([lat, lng]);
+    }
 
-		map.setView([lat, lng], 15);
+    map.setView([lat, lng], 15);
 
-		if (accuracy) {
-			L.circle([lat, lng], {
-				radius: accuracy,
-				fillOpacity: 0.2,
-				color: '#3388ff',
-				fillColor: '#3388ff'
-			}).addTo(map);
-		}
+    if (accuracy) {
+        L.circle([lat, lng], {
+            radius: accuracy,
+            fillOpacity: 0.2,
+            color: '#3388ff',
+            fillColor: '#3388ff'
+        }).addTo(map);
+    }
 
-		savePosition(lat, lng, accuracy);
-	};
+    savePosition(lat, lng, accuracy);
+};
 
 	const savePosition = async (lat: number, lng: number, accuracy?: number) => {
 		if (!conductorData) return;
@@ -324,23 +342,41 @@
 			});
 
 			activeDrivers.forEach((driver) => {
-				if (!otherMarkers[driver.conductor_id]) {
-					otherMarkers[driver.conductor_id] = L.marker([driver.lat, driver.lng], {
-						icon: L.icon({
-							iconUrl: 'https://cdn-icons-png.flaticon.com/512/477/477103.png',
-							iconSize: [32, 32],
-							iconAnchor: [16, 32]
-						}),
-						title: driver.conductor.nombre
-					})
-						.addTo(map)
-						.bindPopup(
-							`<b>${driver.conductor.nombre}</b><br>Placa: ${driver.conductor.placa}<br>Control: ${driver.conductor.control}`
-						);
-				} else {
-					otherMarkers[driver.conductor_id].setLatLng([driver.lat, driver.lng]);
-				}
-			});
+    if (!otherMarkers[driver.conductor_id]) {
+        otherMarkers[driver.conductor_id] = L.marker([driver.lat, driver.lng], {
+            icon: L.divIcon({
+                className: 'other-driver-marker',
+                html: `
+                    <div style="position: relative;">
+                        <img src="https://cdn-icons-png.flaticon.com/512/477/477103.png" 
+                             style="width: 32px; height: 32px;"/>
+                        <div style="position: absolute; 
+                                   top: -10px; 
+                                   left: 50%; 
+                                   transform: translateX(-50%);
+                                   background: white; 
+                                   border-radius: 50%; 
+                                   padding: 2px 5px;
+                                   border: 2px solid #ff3333;
+                                   font-weight: bold;
+                                   font-size: 12px;">
+                            ${driver.conductor.control}
+                        </div>
+                    </div>
+                `,
+                iconSize: [32, 40],
+                iconAnchor: [16, 40]
+            }),
+            title: driver.conductor.nombre
+        })
+        .addTo(map)
+        .bindPopup(
+            `<b>${driver.conductor.nombre}</b><br>Placa: ${driver.conductor.placa}<br>Control: ${driver.conductor.control}`
+        );
+    } else {
+        otherMarkers[driver.conductor_id].setLatLng([driver.lat, driver.lng]);
+    }
+});
 
 			otherDrivers.set(activeDrivers.map((d) => d.conductor));
 		} catch (err) {
