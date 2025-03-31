@@ -2,17 +2,17 @@
 <div class="wrapper">
     <div class="container text-center rounded text-center text-uppercase fs-4 fw-bold">
       <h1 class="title">¡Bienvenido a Rapiditos Colón!</h1>
-      <p class="subtitle">Selecciona una opción</p>
+      <!-- <p class="subtitle">Selecciona una opción</p> -->
       
       <div class="btn-container mt-4">
         <a href="/auth" class="btn btn-driver" aria-current="page">
           <span class="btn-icon">🚗</span>
           <span>Soy conductor</span>
         </a>
-        <a href="/auth" class="btn btn-passenger">
+        <!-- <a href="/auth" class="btn btn-passenger">
           <span class="btn-icon">👤</span>
           <span>Soy Pasajero</span>
-        </a>
+        </a> -->
       </div>
       
       <div class="floating-elements">
