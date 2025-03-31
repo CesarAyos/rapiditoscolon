@@ -87,7 +87,7 @@
 			await import('leaflet/dist/leaflet.css');
 
 			if (!map) {
-				map = L.map(mapContainer).setView([7.8939, -72.5078], 13);
+				map = L.map(mapContainer).setView([8.036238470951442, -72.25267803530193], 13); 
 				L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 					attribution: '&copy; OpenStreetMap contributors'
 				}).addTo(map);
