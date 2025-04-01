@@ -652,6 +652,10 @@
 		.drivers-info {
 			height: 400px;
 		}
+
+		.map-view {
+        height: 400px; /* Añade una altura fija para el mapa en móvil */
+    }
 	}
 
 	@media (max-width: 768px) {
@@ -664,6 +668,10 @@
 		.status-legend {
 			grid-template-columns: repeat(2, 1fr);
 		}
+
+		.map-view {
+        height: 350px; /* Altura un poco menor para pantallas más pequeñas */
+    }
 	}
 
 	@media (max-width: 480px) {
@@ -678,5 +686,9 @@
 		.status-legend {
 			grid-template-columns: 1fr;
 		}
+
+		.map-view {
+        height: 300px; /* Altura aún menor para móviles pequeños */
+    }
 	}
 </style>
