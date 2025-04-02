@@ -144,13 +144,13 @@
 	};
 
 	const updatePosition = (lat: number, lng: number, accuracy?: number) => {
-    if (!map || !conductorData || !L) return;
+		if (!map || !conductorData || !L) return;
 
-    if (!userMarker) {
-        userMarker = L.marker([lat, lng], {
-            icon: L.divIcon({
-                className: 'driver-marker',
-                html: `
+		if (!userMarker) {
+			userMarker = L.marker([lat, lng], {
+				icon: L.divIcon({
+					className: 'driver-marker',
+					html: `
                     <div style="position: relative;">
                         <img src="https://cdn-icons-png.flaticon.com/512/4474/4474228.png" 
                              style="width: 32px; height: 32px;"/>
@@ -168,48 +168,77 @@
                         </div>
                     </div>
                 `,
-                iconSize: [32, 40], // Aumentamos el tamaño para acomodar el texto
-                iconAnchor: [16, 40] // Ajustamos el punto de anclaje
-            }),
-            zIndexOffset: 1000
-        })
-        .addTo(map)
-        .bindPopup(`<b>${conductorData.nombre}</b><br>Placa: ${conductorData.placa}<br>Control: ${conductorData.control}`);
-    } else {
-        userMarker.setLatLng([lat, lng]);
-    }
+					iconSize: [32, 40], // Aumentamos el tamaño para acomodar el texto
+					iconAnchor: [16, 40] // Ajustamos el punto de anclaje
+				}),
+				zIndexOffset: 1000
+			})
+				.addTo(map)
+				.bindPopup(
+					`<b>${conductorData.nombre}</b><br>Placa: ${conductorData.placa}<br>Control: ${conductorData.control}`
+				);
+		} else {
+			userMarker.setLatLng([lat, lng]);
+		}
 
-    map.setView([lat, lng], 15);
+		map.setView([lat, lng], 15);
 
-    if (accuracy) {
-        L.circle([lat, lng], {
-            radius: accuracy,
-            fillOpacity: 0.2,
-            color: '#3388ff',
-            fillColor: '#3388ff'
-        }).addTo(map);
-    }
+		if (accuracy) {
+			L.circle([lat, lng], {
+				radius: accuracy,
+				fillOpacity: 0.2,
+				color: '#3388ff',
+				fillColor: '#3388ff'
+			}).addTo(map);
+		}
 
-    savePosition(lat, lng, accuracy);
-};
+		savePosition(lat, lng, accuracy);
+	};
 
 	const savePosition = async (lat: number, lng: number, accuracy?: number) => {
 		if (!conductorData) return;
 
 		try {
-			const { error } = await supabase.from('conductor_posiciones').insert({
-				conductor_id: conductorData.id,
-				lat,
-				lng,
-				accuracy,
-				estado: currentEstado
-			});
+			// Primero intentamos actualizar un registro existente
+			const { error: updateError } = await supabase.from('conductor_posiciones').upsert(
+				{
+					conductor_id: conductorData.id,
+					lat,
+					lng,
+					accuracy,
+					estado: currentEstado,
+					timestamp: new Date().toISOString()
+				},
+				{
+					onConflict: 'conductor_id' // Esto hace que se actualice si ya existe
+				}
+			);
 
-			if (error) throw error;
+			if (updateError) throw updateError;
 		} catch (err) {
 			console.error('Error guardando posición:', err);
 		}
 	};
+
+	const limpiarPosicionesAntiguas = async () => {
+		if (!conductorData) return;
+
+		try {
+			// Borrar posiciones con más de 1 día de antigüedad
+			const { error } = await supabase
+				.from('conductor_posiciones')
+				.delete()
+				.lt('timestamp', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
+				.eq('conductor_id', conductorData.id);
+
+			if (error) throw error;
+		} catch (err) {
+			console.error('Error limpiando posiciones antiguas:', err);
+		}
+	};
+
+	// Llamar esta función periódicamente (ej. cada hora)
+	setInterval(limpiarPosicionesAntiguas, 60 * 60 * 1000);
 
 	const getCurrentPosition = () => {
 		if (!browser) return;
@@ -342,11 +371,11 @@
 			});
 
 			activeDrivers.forEach((driver) => {
-    if (!otherMarkers[driver.conductor_id]) {
-        otherMarkers[driver.conductor_id] = L.marker([driver.lat, driver.lng], {
-            icon: L.divIcon({
-                className: 'other-driver-marker',
-                html: `
+				if (!otherMarkers[driver.conductor_id]) {
+					otherMarkers[driver.conductor_id] = L.marker([driver.lat, driver.lng], {
+						icon: L.divIcon({
+							className: 'other-driver-marker',
+							html: `
                     <div style="position: relative;">
                         <img src="https://cdn-icons-png.flaticon.com/512/477/477103.png" 
                              style="width: 32px; height: 32px;"/>
@@ -364,19 +393,19 @@
                         </div>
                     </div>
                 `,
-                iconSize: [32, 40],
-                iconAnchor: [16, 40]
-            }),
-            title: driver.conductor.nombre
-        })
-        .addTo(map)
-        .bindPopup(
-            `<b>${driver.conductor.nombre}</b><br>Placa: ${driver.conductor.placa}<br>Control: ${driver.conductor.control}`
-        );
-    } else {
-        otherMarkers[driver.conductor_id].setLatLng([driver.lat, driver.lng]);
-    }
-});
+							iconSize: [32, 40],
+							iconAnchor: [16, 40]
+						}),
+						title: driver.conductor.nombre
+					})
+						.addTo(map)
+						.bindPopup(
+							`<b>${driver.conductor.nombre}</b><br>Placa: ${driver.conductor.placa}<br>Control: ${driver.conductor.control}`
+						);
+				} else {
+					otherMarkers[driver.conductor_id].setLatLng([driver.lat, driver.lng]);
+				}
+			});
 
 			otherDrivers.set(activeDrivers.map((d) => d.conductor));
 		} catch (err) {
@@ -702,7 +731,9 @@
 			{/if}
 		</div>
 	</nav>
-	<button on:click={recargarPagina} class="reload-btn mt-2 btn btn-info"> ↻ Recargar para ver estado de conductores </button>
+	<button on:click={recargarPagina} class="reload-btn mt-2 btn btn-info">
+		↻ Recargar para ver estado de conductores
+	</button>
 	<main class="dashboard-content">
 		<div class="content-wrapper">
 			<div class="map-controls">
