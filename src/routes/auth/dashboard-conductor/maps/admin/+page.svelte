@@ -5,45 +5,29 @@
 	import { supabase } from '../../../../../components/supabase';
 	import Lock from '../../../../../components/lock.svelte';
 	import type { Session } from '@supabase/supabase-js';
-	import type { Map, Marker } from 'leaflet';
+	import type { Map, Marker, DivIcon } from 'leaflet';
 	import ProtectedArea from '../../../../../components/ProtectedArea.svelte';
 
-	type Conductor = {
-		id: number;
-		nombre: string;
-		placa: string;
-		email: string;
-		control: string;
-		propiedad: string;
-		telefono?: string | null;
-		estado?:
-			| 'en_servicio_colon'
-			| 'en_servicio_ureña'
-			| 'en_ruta_colon_ureña'
-			| 'en_ruta_ureña_colon'
-			| 'accidentado'
-			| 'descanso';
-	};
-
-	type ConductorFromDB = {
+	// Tipos mejorados con interfaces más específicas
+	interface ConductorFromDB {
 		id: number;
 		nombre: string;
 		placa: string;
 		control: string;
 		propiedad: string;
-		telefono?: string | null;
-	};
+		telefono: string | null;
+	}
 
-	type PosicionConductor = {
+	interface PosicionConductor {
 		id: number;
 		conductor_id: number;
 		lat: number;
 		lng: number;
-		accuracy?: number;
+		accuracy: number;
 		estado: EstadoConductor;
 		timestamp: string;
 		conductor: ConductorFromDB;
-	};
+	}
 
 	type EstadoConductor =
 		| 'en_servicio_colon'
@@ -53,44 +37,52 @@
 		| 'accidentado'
 		| 'descanso';
 
-	// Stores
+	// Stores con tipos explícitos
 	const activeDrivers = writable<PosicionConductor[]>([]);
 	const error = writable<string>('');
 	const isLoading = writable<boolean>(false);
 	const session = writable<Session | null>(null);
 	const mapInitialized = writable<boolean>(false);
 
-	// Variables reactivas
+	// Variables reactivas con inicialización adecuada
 	let driversData: PosicionConductor[] = [];
-	let errorMessage: string = '';
-	let loading: boolean = false;
+	let errorMessage = '';
+	let loading = false;
 	let currentSession: Session | null = null;
 	let map: Map | null = null;
 	let markers: Record<number, Marker> = {};
-	let mapContainer: HTMLDivElement;
+	let mapContainer: HTMLDivElement | undefined;
 	let L: typeof import('leaflet') | null = null;
 	let updateInterval: NodeJS.Timeout | null = null;
 
-	// Suscripciones
+	// Suscripciones seguras
 	activeDrivers.subscribe((value) => (driversData = value));
 	error.subscribe((value) => (errorMessage = value));
 	isLoading.subscribe((value) => (loading = value));
 	session.subscribe((value) => (currentSession = value));
 
-	// Inicializar mapa
+	// Función para asegurar que Leaflet esté cargado
+	async function ensureLeafletLoaded(): Promise<typeof import('leaflet')> {
+		if (!L) {
+			L = await import('leaflet');
+			await import('leaflet/dist/leaflet.css');
+		}
+		return L;
+	}
+
+	// Inicialización segura del mapa
 	const initMap = async (): Promise<boolean> => {
 		if (!browser || !mapContainer) return false;
 
 		try {
-			const leaflet = await import('leaflet');
-			L = leaflet;
-			await import('leaflet/dist/leaflet.css');
-
+			const leaflet = await ensureLeafletLoaded();
+			
 			if (!map) {
-				map = L.map(mapContainer).setView([8.036238470951442, -72.25267803530193], 13); 
-				L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+				map = leaflet.map(mapContainer).setView([8.036238470951442, -72.25267803530193], 13);
+				leaflet.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 					attribution: '&copy; OpenStreetMap contributors'
 				}).addTo(map);
+				
 				setTimeout(() => map?.invalidateSize(), 100);
 				mapInitialized.set(true);
 			}
@@ -102,130 +94,226 @@
 		}
 	};
 
+	// Obtención de conductores con manejo de errores mejorado
 	const getActiveDrivers = async () => {
-		isLoading.set(true);
-		try {
-			const { data, error: sbError } = await supabase
-				.from('conductor_posiciones')
-				.select(
-					`
-                id,
-                conductor_id,
-                lat,
-                lng,
-                accuracy,
-                estado,
-                timestamp,
-                conductor:conductor_id(id, nombre, placa, control, propiedad, telefono)
-            `
-				)
-				.returns<PosicionConductor[]>()
-				.order('timestamp', { ascending: false });
+  isLoading.set(true);
+  try {
+    const { data, error: sbError } = await supabase
+      .from('conductor_posiciones')
+      .select(`
+        id,
+        conductor_id,
+        lat,
+        lng,
+        accuracy,
+        estado,
+        timestamp,
+        conductor:conductor_id (
+          id, 
+          nombre, 
+          placa, 
+          control, 
+          propiedad, 
+          telefono
+        )
+      `)
+      .in('estado', [
+        'descanso',
+        'en_servicio_colon',
+        'en_servicio_ureña',
+        'en_ruta_colon_ureña',
+        'en_ruta_ureña_colon'
+      ])
+      .order('timestamp', { ascending: false });
 
-			if (sbError) throw sbError;
+    if (sbError) throw sbError;
+    if (!data) throw new Error('No se recibieron datos');
 
-			if (!data) return;
+    // Procesamiento de datos
+    const uniqueDrivers = data.reduce<PosicionConductor[]>((acc, current) => {
+      const existingIndex = acc.findIndex(d => d.conductor_id === current.conductor_id);
+      
+      if (existingIndex === -1 && current.conductor) {
+        acc.push({
+          ...current,
+          conductor: Array.isArray(current.conductor) ? current.conductor[0] : current.conductor
+        });
+      } else if (existingIndex !== -1) {
+        // Conservar el registro más reciente
+        const existingTimestamp = new Date(acc[existingIndex].timestamp);
+        const currentTimestamp = new Date(current.timestamp);
+        if (currentTimestamp > existingTimestamp) {
+          acc[existingIndex] = {
+            ...current,
+            conductor: Array.isArray(current.conductor) ? current.conductor[0] : current.conductor
+          };
+        }
+      }
+      return acc;
+    }, []);
 
-			const uniqueDrivers = data.reduce<PosicionConductor[]>((acc, current) => {
-				const existing = acc.find((d) => d.conductor_id === current.conductor_id);
-				if (!existing) acc.push(current);
-				return acc;
-			}, []);
+    // Actualizar store y marcadores
+    activeDrivers.set(uniqueDrivers);
+    
+    // Asegurar que el mapa esté listo antes de actualizar marcadores
+    if (map && L) {
+      await updateMarkers(uniqueDrivers); // <-- Llamada explícita a updateMarkers
+    } else {
+      console.warn('Mapa no está listo para actualizar marcadores');
+    }
 
-			activeDrivers.set(uniqueDrivers);
-			updateMarkers(uniqueDrivers);
-		} catch (err) {
-			console.error('Error obteniendo conductores activos:', err);
-			error.set('Error al cargar conductores activos');
-		} finally {
-			isLoading.set(false);
-		}
-	};
+  } catch (err) {
+    console.error('Error obteniendo conductores activos:', err);
+    error.set('Error al cargar conductores activos');
+  } finally {
+    isLoading.set(false);
+  }
+};
 
-	const updateMarkers = (drivers: PosicionConductor[]) => {
-		if (!map || !L) return;
 
-		Object.keys(markers).forEach((id) => {
-			if (!drivers.some((d) => d.conductor_id === parseInt(id))) {
-				map?.removeLayer(markers[parseInt(id)]);
-				delete markers[parseInt(id)];
-			}
-		});
+	// Actualización de marcadores con verificación de tipos
+	const updateMarkers = async (drivers: PosicionConductor[]) => {
+  console.log('Actualizando marcadores para', drivers.length, 'conductores');
+  
+  if (!map || !L) {
+    console.error('Mapa o Leaflet no están inicializados');
+    return;
+  }
 
-		drivers.forEach((driver) => {
-			if (!L) return;
+  try {
+    // Limpiar marcadores de conductores que ya no están activos
+    Object.keys(markers).forEach(id => {
+      const numericId = parseInt(id);
+      if (!drivers.some(d => d.conductor_id === numericId)) {
+        map?.removeLayer(markers[numericId]);
+        delete markers[numericId];
+      }
+    });
 
-			const estadoColor = getEstadoColor(driver.estado);
-			const icon = L.divIcon({
-				className: 'driver-marker',
-				html: `
-					<div style="position: relative;">
-						<svg width="32" height="32" viewBox="0 0 32 32" fill="${estadoColor}" xmlns="http://www.w3.org/2000/svg">
-							<path d="M16 0C10.48 0 6 4.48 6 10C6 16.6 16 32 16 32C16 32 26 16.6 26 10C26 4.48 21.52 0 16 0ZM16 15C13.24 15 11 12.76 11 10C11 7.24 13.24 5 16 5C18.76 5 21 7.24 21 10C21 12.76 18.76 15 16 15Z"/>
-						</svg>
-						<div style="position: absolute; 
-									top: -10px; 
-									left: 50%; 
-									transform: translateX(-50%);
-									background: white; 
-									border-radius: 50%; 
-									padding: 2px 5px;
-									border: 2px solid ${estadoColor};
-									font-weight: bold;
-									font-size: 12px;">
-							${driver.conductor.control}
-						</div>
-					</div>
-				`,
-				iconSize: [32, 40],
-				iconAnchor: [16, 40]
-			});
+    // Actualizar o crear marcadores
+    for (const driver of drivers) {
+      if (!driver.lat || !driver.lng) continue;
 
-			if (!markers[driver.conductor_id]) {
-				if (!map) return; // Verificación de nulidad añadida
+      const estadoColor = getEstadoColor(driver.estado);
+      const icon = L!.divIcon({
+        className: 'driver-marker',
+        html: `
+          <div style="position: relative;">
+            <svg width="32" height="32" viewBox="0 0 32 32" fill="${estadoColor}" xmlns="http://www.w3.org/2000/svg">
+              <path d="M16 0C10.48 0 6 4.48 6 10C6 16.6 16 32 16 32C16 32 26 16.6 26 10C26 4.48 21.52 0 16 0ZM16 15C13.24 15 11 12.76 11 10C11 7.24 13.24 5 16 5C18.76 5 21 7.24 21 10C21 12.76 18.76 15 16 15Z"/>
+            </svg>
+            <div style="position: absolute; 
+                        top: -10px; 
+                        left: 50%; 
+                        transform: translateX(-50%);
+                        background: white; 
+                        border-radius: 50%; 
+                        padding: 2px 5px;
+                        border: 2px solid ${estadoColor};
+                        font-weight: bold;
+                        font-size: 12px;">
+              ${driver.conductor.control}
+            </div>
+          </div>
+        `,
+        iconSize: [32, 40],
+        iconAnchor: [16, 40]
+      });
 
-				markers[driver.conductor_id] = L.marker([driver.lat, driver.lng], { icon }).addTo(map)
-					.bindPopup(`
+      if (markers[driver.conductor_id]) {
+        // Actualizar marcador existente
+        markers[driver.conductor_id]
+          .setLatLng([driver.lat, driver.lng])
+          .setIcon(icon)
+          .setPopupContent(`
             <b>${driver.conductor.nombre}</b><br>
             Placa: ${driver.conductor.placa}<br>
             Control: ${driver.conductor.control}<br>
             Estado: ${formatEstado(driver.estado)}<br>
             Propiedad: ${driver.conductor.propiedad}<br>
-            ${driver.timestamp ? `Última actualización: ${new Date(driver.timestamp).toLocaleTimeString()}` : ''}
-        `);
-			} else {
-				markers[driver.conductor_id].setLatLng([driver.lat, driver.lng]).setIcon(icon);
-			}
-		});
-	};
+            ${driver.timestamp ? `Actualizado: ${new Date(driver.timestamp).toLocaleTimeString()}` : ''}
+          `);
+      } else {
+        // Crear nuevo marcador
+        markers[driver.conductor_id] = L!.marker([driver.lat, driver.lng], { icon })
+          .addTo(map!)
+          .bindPopup(`
+            <b>${driver.conductor.nombre}</b><br>
+            Placa: ${driver.conductor.placa}<br>
+            Control: ${driver.conductor.control}<br>
+            Estado: ${formatEstado(driver.estado)}<br>
+            Propiedad: ${driver.conductor.propiedad}<br>
+            ${driver.timestamp ? `Actualizado: ${new Date(driver.timestamp).toLocaleTimeString()}` : ''}
+          `);
+      }
+    }
+  } catch (error) {
+    console.error('Error en updateMarkers:', error);
+  }
+};
 
+
+	// Función helper para crear iconos
+	function createDriverIcon(leaflet: typeof import('leaflet'), color: string, control: string): DivIcon {
+		return leaflet.divIcon({
+			className: 'driver-marker',
+			html: `
+				<div style="position: relative;">
+					<svg width="32" height="32" viewBox="0 0 32 32" fill="${color}" xmlns="http://www.w3.org/2000/svg">
+						<path d="M16 0C10.48 0 6 4.48 6 10C6 16.6 16 32 16 32C16 32 26 16.6 26 10C26 4.48 21.52 0 16 0ZM16 15C13.24 15 11 12.76 11 10C11 7.24 13.24 5 16 5C18.76 5 21 7.24 21 10C21 12.76 18.76 15 16 15Z"/>
+					</svg>
+					<div style="position: absolute; 
+								top: -10px; 
+								left: 50%; 
+								transform: translateX(-50%);
+								background: white; 
+								border-radius: 50%; 
+								padding: 2px 5px;
+								border: 2px solid ${color};
+								font-weight: bold;
+								font-size: 12px;">
+						${control}
+					</div>
+				</div>
+			`,
+			iconSize: [32, 40],
+			iconAnchor: [16, 40]
+		});
+	}
+
+	// Función helper para contenido de popup
+	function createPopupContent(driver: PosicionConductor): string {
+		return `
+			<b>${driver.conductor.nombre}</b><br>
+			Placa: ${driver.conductor.placa}<br>
+			Control: ${driver.conductor.control}<br>
+			Estado: ${formatEstado(driver.estado)}<br>
+			Propiedad: ${driver.conductor.propiedad}<br>
+			${driver.timestamp ? `Actualizado: ${new Date(driver.timestamp).toLocaleTimeString()}` : ''}
+		`;
+	}
+
+	// Funciones de utilidad
 	const getEstadoColor = (estado: EstadoConductor): string => {
-		switch (estado) {
-			case 'en_servicio_colon':
-				return '#3498db';
-			case 'en_servicio_ureña':
-				return '#2ecc71';
-			case 'en_ruta_colon_ureña':
-				return '#f39c12';
-			case 'en_ruta_ureña_colon':
-				return '#e74c3c';
-			case 'accidentado':
-				return '#9b59b6';
-			case 'descanso':
-				return '#95a5a6';
-			default:
-				return '#34495e';
-		}
+		const colors: Record<EstadoConductor, string> = {
+			'en_servicio_colon': '#3498db',
+			'en_servicio_ureña': '#2ecc71',
+			'en_ruta_colon_ureña': '#f39c12',
+			'en_ruta_ureña_colon': '#e74c3c',
+			'accidentado': '#9b59b6',
+			'descanso': '#95a5a6'
+		};
+		return colors[estado] ?? '#34495e';
 	};
 
 	const formatEstado = (estado: EstadoConductor): string => {
 		const estados: Record<EstadoConductor, string> = {
-			en_servicio_colon: 'En servicio (Colón)',
-			en_servicio_ureña: 'En servicio (Ureña)',
-			en_ruta_colon_ureña: 'En ruta (Colón → Ureña)',
-			en_ruta_ureña_colon: 'En ruta (Ureña → Colón)',
-			accidentado: 'Accidentado',
-			descanso: 'En descanso'
+			'en_servicio_colon': 'En servicio (Colón)',
+			'en_servicio_ureña': 'En servicio (Ureña)',
+			'en_ruta_colon_ureña': 'En ruta (Colón → Ureña)',
+			'en_ruta_ureña_colon': 'En ruta (Ureña → Colón)',
+			'accidentado': 'Accidentado',
+			'descanso': 'En descanso'
 		};
 		return estados[estado];
 	};
@@ -241,7 +329,7 @@
 	};
 
 	const setupSubscriptions = () => {
-		const channel = supabase
+		return supabase
 			.channel('admin_drivers_updates')
 			.on(
 				'postgres_changes',
@@ -250,45 +338,43 @@
 					schema: 'public',
 					table: 'conductor_posiciones'
 				},
-				() => {
-					getActiveDrivers();
-				}
+				() => getActiveDrivers()
 			)
 			.subscribe();
-
-		return channel;
 	};
 
+	// Lifecycle hooks
 	onMount(() => {
-		let channel: ReturnType<typeof setupSubscriptions> | null = null;
+  let channel: ReturnType<typeof setupSubscriptions> | null = null;
 
-		const initialize = async () => {
-			await getSession();
-			await initMap();
-			await getActiveDrivers();
-			channel = setupSubscriptions();
-			updateInterval = setInterval(getActiveDrivers, 30000);
-		};
+  const initialize = async () => {
+    await getSession();
+    const isMapReady = await initMap();
+    
+    if (isMapReady) {
+      // Asegurar que el mapa esté completamente cargado
+      setTimeout(() => {
+        map?.invalidateSize();
+        getActiveDrivers(); // <-- Cargar datos después de que el mapa esté listo
+      }, 500);
+    }
+    
+    channel = setupSubscriptions();
+    updateInterval = setInterval(getActiveDrivers, 30000);
+  };
 
-		initialize();
+  initialize();
 
-		return () => {
-			if (channel) supabase.removeChannel(channel);
-			if (updateInterval) clearInterval(updateInterval);
-			if (map) {
-				map.remove();
-				map = null;
-			}
-		};
-	});
+  return () => {
+    if (channel) supabase.removeChannel(channel);
+    if (updateInterval) clearInterval(updateInterval);
+    if (map) map.remove();
+  };
+});
 
 	onDestroy(() => {
-		if (!browser) return;
 		if (updateInterval) clearInterval(updateInterval);
-		if (map) {
-			map.remove();
-			map = null;
-		}
+		map?.remove();
 	});
 </script>
 
@@ -576,6 +662,11 @@
 		flex: 1;
 	}
 
+	.driver-marker {
+		background: transparent;
+		border: none;
+	}
+
 	.driver-card {
 		background: white;
 		border-radius: 8px;
@@ -654,8 +745,8 @@
 		}
 
 		.map-view {
-        height: 400px; /* Añade una altura fija para el mapa en móvil */
-    }
+			height: 400px; /* Añade una altura fija para el mapa en móvil */
+		}
 	}
 
 	@media (max-width: 768px) {
@@ -670,8 +761,8 @@
 		}
 
 		.map-view {
-        height: 350px; /* Altura un poco menor para pantallas más pequeñas */
-    }
+			height: 350px; /* Altura un poco menor para pantallas más pequeñas */
+		}
 	}
 
 	@media (max-width: 480px) {
@@ -688,7 +779,7 @@
 		}
 
 		.map-view {
-        height: 300px; /* Altura aún menor para móviles pequeños */
-    }
+			height: 300px; /* Altura aún menor para móviles pequeños */
+		}
 	}
 </style>

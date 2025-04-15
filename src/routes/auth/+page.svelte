@@ -307,62 +307,7 @@
 		width: 100%;
 	}
 
-	/* Opciones adicionales */
-	.form-options {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		margin: 25px 0;
-		font-size: 0.9rem;
-	}
-
-	.remember-me {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		color: #7f8c8d;
-		cursor: pointer;
-	}
-
-	.checkmark {
-		width: 18px;
-		height: 18px;
-		border: 2px solid #bdc3c7;
-		border-radius: 4px;
-		display: inline-block;
-		position: relative;
-		transition: all 0.3s;
-	}
-
-	.remember-me input:checked + .checkmark {
-		background: #3498db;
-		border-color: #3498db;
-	}
-
-	.checkmark:after {
-		content: '✓';
-		position: absolute;
-		left: 50%;
-		top: 50%;
-		transform: translate(-50%, -50%) scale(0);
-		transition: transform 0.2s;
-		color: white;
-		font-size: 0.8rem;
-	}
-
-	.remember-me input:checked + .checkmark:after {
-		transform: translate(-50%, -50%) scale(1);
-	}
-
-	.forgot-password {
-		color: #3498db;
-		text-decoration: none;
-		transition: color 0.3s;
-	}
-
-	.forgot-password:hover {
-		text-decoration: underline;
-	}
+	
 
 	/* Mensaje de error */
 	.error-message {
