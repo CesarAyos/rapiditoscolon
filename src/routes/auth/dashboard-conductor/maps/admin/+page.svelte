@@ -76,13 +76,15 @@
 
 		try {
 			const leaflet = await ensureLeafletLoaded();
-			
+
 			if (!map) {
 				map = leaflet.map(mapContainer).setView([8.036238470951442, -72.25267803530193], 13);
-				leaflet.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-					attribution: '&copy; OpenStreetMap contributors'
-				}).addTo(map);
-				
+				leaflet
+					.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+						attribution: '&copy; OpenStreetMap contributors'
+					})
+					.addTo(map);
+
 				setTimeout(() => map?.invalidateSize(), 100);
 				mapInitialized.set(true);
 			}
@@ -96,165 +98,142 @@
 
 	// Obtención de conductores con manejo de errores mejorado
 	const getActiveDrivers = async () => {
-  isLoading.set(true);
-  try {
-    const { data, error: sbError } = await supabase
-      .from('conductor_posiciones')
-      .select(`
+		isLoading.set(true);
+		try {
+			// Primero obtenemos las últimas posiciones de cada conductor
+			const { data: positionsData, error: positionsError } = await supabase
+				.from('conductor_posiciones')
+				.select(
+					`
         id,
         conductor_id,
         lat,
         lng,
         accuracy,
-        estado,
         timestamp,
         conductor:conductor_id (
-          id, 
-          nombre, 
-          placa, 
-          control, 
-          propiedad, 
+          id,
+          nombre,
+          placa,
+          control,
+          propiedad,
           telefono
         )
-      `)
-      .in('estado', [
-        'descanso',
-        'en_servicio_colon',
-        'en_servicio_ureña',
-        'en_ruta_colon_ureña',
-        'en_ruta_ureña_colon'
-      ])
-      .order('timestamp', { ascending: false });
+      `
+				)
+				.order('timestamp', { ascending: false });
 
-    if (sbError) throw sbError;
-    if (!data) throw new Error('No se recibieron datos');
+			if (positionsError) throw positionsError;
+			if (!positionsData) throw new Error('No se recibieron datos de posiciones');
 
-    // Procesamiento de datos
-    const uniqueDrivers = data.reduce<PosicionConductor[]>((acc, current) => {
-      const existingIndex = acc.findIndex(d => d.conductor_id === current.conductor_id);
-      
-      if (existingIndex === -1 && current.conductor) {
-        acc.push({
-          ...current,
-          conductor: Array.isArray(current.conductor) ? current.conductor[0] : current.conductor
-        });
-      } else if (existingIndex !== -1) {
-        // Conservar el registro más reciente
-        const existingTimestamp = new Date(acc[existingIndex].timestamp);
-        const currentTimestamp = new Date(current.timestamp);
-        if (currentTimestamp > existingTimestamp) {
-          acc[existingIndex] = {
-            ...current,
-            conductor: Array.isArray(current.conductor) ? current.conductor[0] : current.conductor
-          };
-        }
-      }
-      return acc;
-    }, []);
+			// Luego obtenemos los últimos estados de cada conductor
+			const { data: estadosData, error: estadosError } = await supabase
+				.from('estado_conductor')
+				.select(
+					`
+        conductor_id,
+        estado,
+        created_at
+      `
+				)
+				.order('created_at', { ascending: false });
 
-    // Actualizar store y marcadores
-    activeDrivers.set(uniqueDrivers);
-    
-    // Asegurar que el mapa esté listo antes de actualizar marcadores
-    if (map && L) {
-      await updateMarkers(uniqueDrivers); // <-- Llamada explícita a updateMarkers
-    } else {
-      console.warn('Mapa no está listo para actualizar marcadores');
-    }
+			if (estadosError) throw estadosError;
 
-  } catch (err) {
-    console.error('Error obteniendo conductores activos:', err);
-    error.set('Error al cargar conductores activos');
-  } finally {
-    isLoading.set(false);
-  }
-};
+			// Procesamos para obtener el último estado de cada conductor
+			const latestEstados = estadosData.reduce((acc, current) => {
+				if (!acc[current.conductor_id]) {
+					acc[current.conductor_id] = current;
+				}
+				return acc;
+			}, {});
 
+			// Combinamos los datos
+			const combinedData = positionsData.map((position) => {
+				const estadoInfo = latestEstados[position.conductor_id] || { estado: 'descanso' };
+
+				return {
+					...position,
+					estado: estadoInfo.estado,
+					conductor: Array.isArray(position.conductor) ? position.conductor[0] : position.conductor
+				};
+			});
+
+			// Filtramos para obtener solo la última posición de cada conductor
+			const uniqueDrivers = combinedData.reduce<PosicionConductor[]>((acc, current) => {
+				const existingIndex = acc.findIndex((d) => d.conductor_id === current.conductor_id);
+
+				if (existingIndex === -1) {
+					acc.push(current);
+				}
+				return acc;
+			}, []);
+
+			activeDrivers.set(uniqueDrivers);
+			await updateMarkers(uniqueDrivers);
+		} catch (err) {
+			console.error('Error obteniendo conductores:', err);
+			error.set('Error al cargar conductores');
+		} finally {
+			isLoading.set(false);
+		}
+	};
 
 	// Actualización de marcadores con verificación de tipos
 	const updateMarkers = async (drivers: PosicionConductor[]) => {
-  console.log('Actualizando marcadores para', drivers.length, 'conductores');
-  
-  if (!map || !L) {
-    console.error('Mapa o Leaflet no están inicializados');
-    return;
-  }
+		if (!map || !L) {
+			console.error('Mapa no inicializado');
+			return;
+		}
 
-  try {
-    // Limpiar marcadores de conductores que ya no están activos
-    Object.keys(markers).forEach(id => {
-      const numericId = parseInt(id);
-      if (!drivers.some(d => d.conductor_id === numericId)) {
-        map?.removeLayer(markers[numericId]);
-        delete markers[numericId];
-      }
-    });
+		// Primero eliminamos marcadores de conductores que ya no están activos
+		const activeDriverIds = drivers.map((d) => d.conductor_id);
+		Object.keys(markers).forEach((id) => {
+			const numericId = Number(id);
+			if (!activeDriverIds.includes(numericId)) {
+				map?.removeLayer(markers[numericId]);
+				delete markers[numericId];
+			}
+		});
 
-    // Actualizar o crear marcadores
-    for (const driver of drivers) {
-      if (!driver.lat || !driver.lng) continue;
+		// Luego actualizamos o creamos marcadores
+		drivers.forEach((driver) => {
+			if (!driver.lat || !driver.lng) return;
 
-      const estadoColor = getEstadoColor(driver.estado);
-      const icon = L!.divIcon({
-        className: 'driver-marker',
-        html: `
-          <div style="position: relative;">
-            <svg width="32" height="32" viewBox="0 0 32 32" fill="${estadoColor}" xmlns="http://www.w3.org/2000/svg">
-              <path d="M16 0C10.48 0 6 4.48 6 10C6 16.6 16 32 16 32C16 32 26 16.6 26 10C26 4.48 21.52 0 16 0ZM16 15C13.24 15 11 12.76 11 10C11 7.24 13.24 5 16 5C18.76 5 21 7.24 21 10C21 12.76 18.76 15 16 15Z"/>
-            </svg>
-            <div style="position: absolute; 
-                        top: -10px; 
-                        left: 50%; 
-                        transform: translateX(-50%);
-                        background: white; 
-                        border-radius: 50%; 
-                        padding: 2px 5px;
-                        border: 2px solid ${estadoColor};
-                        font-weight: bold;
-                        font-size: 12px;">
-              ${driver.conductor.control}
-            </div>
-          </div>
-        `,
-        iconSize: [32, 40],
-        iconAnchor: [16, 40]
-      });
+			const estadoColor = getEstadoColor(driver.estado);
 
-      if (markers[driver.conductor_id]) {
-        // Actualizar marcador existente
-        markers[driver.conductor_id]
-          .setLatLng([driver.lat, driver.lng])
-          .setIcon(icon)
-          .setPopupContent(`
-            <b>${driver.conductor.nombre}</b><br>
-            Placa: ${driver.conductor.placa}<br>
-            Control: ${driver.conductor.control}<br>
-            Estado: ${formatEstado(driver.estado)}<br>
-            Propiedad: ${driver.conductor.propiedad}<br>
-            ${driver.timestamp ? `Actualizado: ${new Date(driver.timestamp).toLocaleTimeString()}` : ''}
-          `);
-      } else {
-        // Crear nuevo marcador
-        markers[driver.conductor_id] = L!.marker([driver.lat, driver.lng], { icon })
-          .addTo(map!)
-          .bindPopup(`
-            <b>${driver.conductor.nombre}</b><br>
-            Placa: ${driver.conductor.placa}<br>
-            Control: ${driver.conductor.control}<br>
-            Estado: ${formatEstado(driver.estado)}<br>
-            Propiedad: ${driver.conductor.propiedad}<br>
-            ${driver.timestamp ? `Actualizado: ${new Date(driver.timestamp).toLocaleTimeString()}` : ''}
-          `);
-      }
-    }
-  } catch (error) {
-    console.error('Error en updateMarkers:', error);
-  }
-};
+			if (markers[driver.conductor_id]) {
+				// Actualizar marcador existente
+				markers[driver.conductor_id]
+					.setLatLng([driver.lat, driver.lng])
+					.setIcon(createDriverIcon(L!, estadoColor, driver.conductor.control))
+					.setPopupContent(createPopupContent(driver));
+			} else {
+				// Crear nuevo marcador
+				markers[driver.conductor_id] = L!
+					.marker([driver.lat, driver.lng], {
+						icon: createDriverIcon(L!, estadoColor, driver.conductor.control)
+					})
+					.addTo(map)
+					.bindPopup(createPopupContent(driver));
 
+				// Opcional: animación para nuevos marcadores
+				markers[driver.conductor_id].on('add', () => {
+					const markerElement = markers[driver.conductor_id].getElement();
+					if (markerElement) {
+						markerElement.style.transition = 'all 0.5s ease-out';
+					}
+				});
+			}
+		});
+	};
 
 	// Función helper para crear iconos
-	function createDriverIcon(leaflet: typeof import('leaflet'), color: string, control: string): DivIcon {
+	function createDriverIcon(
+		leaflet: typeof import('leaflet'),
+		color: string,
+		control: string
+	): DivIcon {
 		return leaflet.divIcon({
 			className: 'driver-marker',
 			html: `
@@ -296,24 +275,24 @@
 	// Funciones de utilidad
 	const getEstadoColor = (estado: EstadoConductor): string => {
 		const colors: Record<EstadoConductor, string> = {
-			'en_servicio_colon': '#3498db',
-			'en_servicio_ureña': '#2ecc71',
-			'en_ruta_colon_ureña': '#f39c12',
-			'en_ruta_ureña_colon': '#e74c3c',
-			'accidentado': '#9b59b6',
-			'descanso': '#95a5a6'
+			en_servicio_colon: '#3498db',
+			en_servicio_ureña: '#2ecc71',
+			en_ruta_colon_ureña: '#f39c12',
+			en_ruta_ureña_colon: '#e74c3c',
+			accidentado: '#9b59b6',
+			descanso: '#95a5a6'
 		};
 		return colors[estado] ?? '#34495e';
 	};
 
 	const formatEstado = (estado: EstadoConductor): string => {
 		const estados: Record<EstadoConductor, string> = {
-			'en_servicio_colon': 'En servicio (Colón)',
-			'en_servicio_ureña': 'En servicio (Ureña)',
-			'en_ruta_colon_ureña': 'En ruta (Colón → Ureña)',
-			'en_ruta_ureña_colon': 'En ruta (Ureña → Colón)',
-			'accidentado': 'Accidentado',
-			'descanso': 'En descanso'
+			en_servicio_colon: 'En servicio (Colón)',
+			en_servicio_ureña: 'En servicio (Ureña)',
+			en_ruta_colon_ureña: 'En ruta (Colón → Ureña)',
+			en_ruta_ureña_colon: 'En ruta (Ureña → Colón)',
+			accidentado: 'Accidentado',
+			descanso: 'En descanso'
 		};
 		return estados[estado];
 	};
@@ -329,48 +308,133 @@
 	};
 
 	const setupSubscriptions = () => {
-		return supabase
-			.channel('admin_drivers_updates')
+		// Canal para cambios en posiciones
+		const positionsChannel = supabase
+			.channel('positions_changes')
 			.on(
 				'postgres_changes',
 				{
-					event: '*',
+					event: 'INSERT',
 					schema: 'public',
 					table: 'conductor_posiciones'
 				},
-				() => getActiveDrivers()
+				async (payload) => {
+					console.log('Nueva posición recibida:', payload);
+					// Obtenemos los datos completos del conductor
+					const { data, error } = await supabase
+						.from('conductor_posiciones')
+						.select(
+							`
+            id,
+            conductor_id,
+            lat,
+            lng,
+            accuracy,
+            timestamp,
+            conductor:conductor_id (
+              id,
+              nombre,
+              placa,
+              control,
+              propiedad,
+              telefono
+            )
+          `
+						)
+						.eq('id', payload.new.id)
+						.single();
+
+					if (data) {
+						// Obtenemos el último estado
+						const { data: estadoData } = await supabase
+							.from('estado_conductor')
+							.select('estado')
+							.eq('conductor_id', data.conductor_id)
+							.order('created_at', { ascending: false })
+							.limit(1)
+							.single();
+
+						const updatedDriver = {
+							...data,
+							estado: estadoData?.estado || 'descanso',
+							conductor: Array.isArray(data.conductor) ? data.conductor[0] : data.conductor
+						};
+
+						// Actualizamos el store
+						activeDrivers.update((drivers) => {
+							const existingIndex = drivers.findIndex(
+								(d) => d.conductor_id === updatedDriver.conductor_id
+							);
+							if (existingIndex >= 0) {
+								return [
+									...drivers.slice(0, existingIndex),
+									updatedDriver,
+									...drivers.slice(existingIndex + 1)
+								];
+							}
+							return [...drivers, updatedDriver];
+						});
+					}
+				}
 			)
 			.subscribe();
+
+		// Canal para cambios en estados
+		const estadosChannel = supabase
+			.channel('estados_changes')
+			.on(
+				'postgres_changes',
+				{
+					event: 'INSERT',
+					schema: 'public',
+					table: 'estado_conductor'
+				},
+				async (payload) => {
+					console.log('Nuevo estado recibido:', payload);
+					// Actualizamos el estado del conductor correspondiente
+					activeDrivers.update((drivers) => {
+						return drivers.map((driver) => {
+							if (driver.conductor_id === payload.new.conductor_id) {
+								return { ...driver, estado: payload.new.estado };
+							}
+							return driver;
+						});
+					});
+				}
+			)
+			.subscribe();
+
+		return { positionsChannel, estadosChannel };
 	};
 
 	// Lifecycle hooks
 	onMount(() => {
-  let channel: ReturnType<typeof setupSubscriptions> | null = null;
+		let channel: ReturnType<typeof setupSubscriptions> | null = null;
 
-  const initialize = async () => {
-    await getSession();
-    const isMapReady = await initMap();
-    
-    if (isMapReady) {
-      // Asegurar que el mapa esté completamente cargado
-      setTimeout(() => {
-        map?.invalidateSize();
-        getActiveDrivers(); // <-- Cargar datos después de que el mapa esté listo
-      }, 500);
-    }
-    
-    channel = setupSubscriptions();
-    updateInterval = setInterval(getActiveDrivers, 30000);
-  };
+		const initialize = async () => {
+			await getSession();
+			const isMapReady = await initMap();
 
-  initialize();
+			if (isMapReady) {
+				// Asegurar que el mapa esté completamente cargado
+				setTimeout(() => {
+					map?.invalidateSize();
+					getActiveDrivers(); // <-- Cargar datos después de que el mapa esté listo
+				}, 500);
+			}
 
-  return () => {
-    if (channel) supabase.removeChannel(channel);
-    if (updateInterval) clearInterval(updateInterval);
-    if (map) map.remove();
-  };
-});
+			channel = setupSubscriptions();
+			updateInterval = setInterval(getActiveDrivers, 30000);
+		};
+
+		initialize();
+
+		return () => {
+			if (channel) supabase.removeChannel(channel);
+			if (updateInterval) clearInterval(updateInterval);
+			if (map) map.remove();
+		};
+	});
 
 	onDestroy(() => {
 		if (updateInterval) clearInterval(updateInterval);
