@@ -129,35 +129,36 @@
 	};
 
 	const cambiarEstado = async (nuevoEstado: EstadoPosible, descripcion: string = ''): Promise<void> => {
-		if (!conductorData?.id) {
-			error.set('No hay datos del conductor');
-			return;
-		}
+    if (!conductorData?.id) {
+        error.set('No hay datos del conductor');
+        return;
+    }
 
-		isLoading.set(true);
-		
-		try {
-			const { error: dbError } = await supabase
-				.from('estado_conductor')
-				.insert({
-					conductor_id: conductorData.id,
-					estado: nuevoEstado,
-					descripcion: descripcion || null
-				});
+    isLoading.set(true);
 
-			if (dbError) throw dbError;
+    try {
+        const { error: dbError } = await supabase
+            .from('estado_conductor')
+            .update({
+                estado: nuevoEstado,
+                descripcion: descripcion || null
+            })
+            .eq('conductor_id', conductorData.id);
 
-			estadoActual.set(nuevoEstado);
-			error.set(`✅ Estado actualizado: ${nuevoEstado}`);
-			setTimeout(() => error.set(''), 3000);
-		} catch (err) {
-			console.error('Error al cambiar estado:', err);
-			error.set(err instanceof Error ? err.message : 'Error al actualizar estado');
-			setTimeout(() => error.set(''), 5000);
-		} finally {
-			isLoading.set(false);
-		}
-	};
+        if (dbError) throw dbError;
+
+        estadoActual.set(nuevoEstado);
+        error.set(`✅ Estado actualizado: ${nuevoEstado}`);
+        setTimeout(() => error.set(''), 3000);
+    } catch (err) {
+        console.error('Error al cambiar estado:', err);
+        error.set(err instanceof Error ? err.message : 'Error al actualizar estado');
+        setTimeout(() => error.set(''), 5000);
+    } finally {
+        isLoading.set(false);
+    }
+};
+
 
 	onMount(() => {
 		let authListener: { subscription: Subscription } | null = null;
