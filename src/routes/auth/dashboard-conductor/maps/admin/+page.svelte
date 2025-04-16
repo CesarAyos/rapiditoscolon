@@ -193,10 +193,10 @@
     } else {
       // Crear nuevo marcador
       markers[driver.conductor_id] = L!.marker([driver.lat, driver.lng], {
-        icon: createDriverIcon(L!, estadoColor, driver.conductor.control)
-      }).addTo(map)
-      .bindPopup(createPopupContent(driver));
-    }
+  icon: createDriverIcon(L!, estadoColor, driver.conductor.control)
+}).addTo(map!)
+  .bindPopup(createPopupContent(driver));
+	}
   });
 };
 
@@ -615,10 +615,6 @@
 		flex: 1;
 	}
 
-	.driver-marker {
-		background: transparent;
-		border: none;
-	}
 
 	.driver-card {
 		background: white;
