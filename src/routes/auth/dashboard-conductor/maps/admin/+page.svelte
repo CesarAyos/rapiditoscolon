@@ -3,12 +3,10 @@
 	import { writable } from 'svelte/store';
 	import { browser } from '$app/environment';
 	import { supabase } from '../../../../../components/supabase';
-	import Lock from '../../../../../components/lock.svelte';
-	import type { Session } from '@supabase/supabase-js';
-	import type { Map, Marker, DivIcon } from 'leaflet';
-	import ProtectedArea from '../../../../../components/ProtectedArea.svelte';
+	import type * as Leaflet from 'leaflet';
+	import Estado from '../../../../../components/estado.svelte';
+	
 
-	// Tipos mejorados con interfaces más específicas
 	interface ConductorFromDB {
 		id: number;
 		nombre: string;
@@ -19,57 +17,37 @@
 	}
 
 	interface PosicionConductor {
-  id: number;
-  conductor_id: number;
-  lat: number;
-  lng: number;
-  accuracy: number;
-  timestamp: string;
-  estado: EstadoConductor;
-  conductor: {
-    id: number;
-    nombre: string;
-    placa: string;
-    control: string;
-    propiedad: string;
-    telefono: string | null;
-  };
-}
+		id: number;
+		conductor_id: number;
+		lat: number;
+		lng: number;
+		accuracy: number;
+		timestamp: string;
+		conductor: ConductorFromDB;
+	}
 
-	type EstadoConductor =
-		| 'en_servicio_colon'
-		| 'en_servicio_ureña'
-		| 'en_ruta_colon_ureña'
-		| 'en_ruta_ureña_colon'
-		| 'accidentado'
-		| 'descanso';
-
-	// Stores con tipos explícitos
+	// Stores
 	const activeDrivers = writable<PosicionConductor[]>([]);
 	const error = writable<string>('');
 	const isLoading = writable<boolean>(false);
-	const session = writable<Session | null>(null);
-	const mapInitialized = writable<boolean>(false);
 
-	// Variables reactivas con inicialización adecuada
+	// Variables
 	let driversData: PosicionConductor[] = [];
 	let errorMessage = '';
 	let loading = false;
-	let currentSession: Session | null = null;
-	let map: Map | null = null;
-	let markers: Record<number, Marker> = {};
+	let map: Leaflet.Map | null = null;
+	let markers: Record<number, Leaflet.Marker> = {};
 	let mapContainer: HTMLDivElement | undefined;
-	let L: typeof import('leaflet') | null = null;
+	let L: typeof Leaflet | null = null;
 	let updateInterval: NodeJS.Timeout | null = null;
 
-	// Suscripciones seguras
+	// Suscripciones
 	activeDrivers.subscribe((value) => (driversData = value));
 	error.subscribe((value) => (errorMessage = value));
 	isLoading.subscribe((value) => (loading = value));
-	session.subscribe((value) => (currentSession = value));
 
-	// Función para asegurar que Leaflet esté cargado
-	async function ensureLeafletLoaded(): Promise<typeof import('leaflet')> {
+	// Leaflet
+	async function ensureLeafletLoaded(): Promise<typeof Leaflet> {
 		if (!L) {
 			L = await import('leaflet');
 			await import('leaflet/dist/leaflet.css');
@@ -77,7 +55,6 @@
 		return L;
 	}
 
-	// Inicialización segura del mapa
 	const initMap = async (): Promise<boolean> => {
 		if (!browser || !mapContainer) return false;
 
@@ -93,7 +70,6 @@
 					.addTo(map);
 
 				setTimeout(() => map?.invalidateSize(), 100);
-				mapInitialized.set(true);
 			}
 			return true;
 		} catch (err) {
@@ -103,114 +79,101 @@
 		}
 	};
 
-	// Obtención de conductores con manejo de errores mejorado
+	// Obtener conductores activos
 	const getActiveDrivers = async () => {
-  isLoading.set(true);
-  try {
-    // Obtener todas las posiciones recientes (últimas 2 horas)
-    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
-    
-    const { data, error } = await supabase
-      .from('conductor_posiciones')
-      .select(`
-        id,
-        conductor_id,
-        lat,
-        lng,
-        accuracy,
-        timestamp,
-        conductor:conductor_id (
-          id,
-          nombre,
-          placa,
-          control,
-          propiedad,
-          telefono
-        )
-      `)
-      .gt('timestamp', twoHoursAgo)
-      .order('timestamp', { ascending: false });
+		isLoading.set(true);
+		try {
+			const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+			
+			const { data, error } = await supabase
+				.from('conductor_posiciones')
+				.select(`
+					id,
+					conductor_id,
+					lat,
+					lng,
+					accuracy,
+					timestamp,
+					conductor:conductor_id (
+						id,
+						nombre,
+						placa,
+						control,
+						propiedad,
+						telefono
+					)
+				`)
+				.gt('timestamp', twoHoursAgo)
+				.order('timestamp', { ascending: false });
 
-    if (error) throw error;
-    if (!data) throw new Error('No se recibieron datos');
+			if (error) throw error;
+			if (!data) throw new Error('No se recibieron datos');
 
-    // Filtrar y obtener la última posición de cada conductor
-    const uniqueDrivers = data.reduce<PosicionConductor[]>((acc, current) => {
-      const existingIndex = acc.findIndex(d => d.conductor_id === current.conductor_id);
-      
-      if (existingIndex === -1) {
-        acc.push({
-          ...current,
-          conductor: Array.isArray(current.conductor) ? current.conductor[0] : current.conductor,
-          estado: 'en_servicio_colon' // Valor por defecto
-        });
-      }
-      return acc;
-    }, []);
+			// Filtrar para obtener la última posición de cada conductor
+			const uniqueDrivers = data.reduce<PosicionConductor[]>((acc, current) => {
+				const existingIndex = acc.findIndex(d => d.conductor_id === current.conductor_id);
+				if (existingIndex === -1) {
+					acc.push({
+						...current,
+						conductor: Array.isArray(current.conductor) ? current.conductor[0] : current.conductor
+					});
+				}
+				return acc;
+			}, []);
 
-    activeDrivers.set(uniqueDrivers);
-    await updateMarkers(uniqueDrivers);
+			activeDrivers.set(uniqueDrivers);
+			await updateMarkers(uniqueDrivers);
 
-  } catch (err) {
-    console.error('Error obteniendo conductores:', err);
-    error.set('Error al cargar conductores');
-  } finally {
-    isLoading.set(false);
-  }
-};
+		} catch (err) {
+			console.error('Error obteniendo conductores:', err);
+			error.set('Error al cargar conductores');
+		} finally {
+			isLoading.set(false);
+		}
+	};
 
-	// Actualización de marcadores con verificación de tipos
+	// Actualizar marcadores
 	const updateMarkers = async (drivers: PosicionConductor[]) => {
-  if (!map || !L) {
-    console.error('Mapa no inicializado');
-    return;
-  }
+		if (!map || !L) return;
 
-  // Obtener IDs de conductores activos
-  const activeDriverIds = drivers.map(d => d.conductor_id);
+		const activeDriverIds = drivers.map(d => d.conductor_id);
 
-  // Eliminar marcadores de conductores inactivos
-  Object.keys(markers).forEach(id => {
-    const numericId = Number(id);
-    if (!activeDriverIds.includes(numericId)) {
-      map?.removeLayer(markers[numericId]);
-      delete markers[numericId];
-    }
-  });
+		// Eliminar marcadores antiguos
+		Object.keys(markers).forEach(id => {
+			const numericId = Number(id);
+			if (!activeDriverIds.includes(numericId)) {
+				map?.removeLayer(markers[numericId]);
+				delete markers[numericId];
+			}
+		});
 
-  // Actualizar o crear marcadores
-  drivers.forEach(driver => {
-    if (!driver.lat || !driver.lng) return;
+		// Crear/actualizar marcadores
+		drivers.forEach(driver => {
+			if (!driver.lat || !driver.lng) return;
 
-    const estadoColor = getEstadoColor(driver.estado);
-    
-    if (markers[driver.conductor_id]) {
-      // Actualizar marcador existente
-      markers[driver.conductor_id]
-        .setLatLng([driver.lat, driver.lng])
-        .setIcon(createDriverIcon(L!, estadoColor, driver.conductor.control))
-        .setPopupContent(createPopupContent(driver));
-    } else {
-      // Crear nuevo marcador
-      markers[driver.conductor_id] = L!.marker([driver.lat, driver.lng], {
-  icon: createDriverIcon(L!, estadoColor, driver.conductor.control)
-}).addTo(map!)
-  .bindPopup(createPopupContent(driver));
-	}
-  });
-};
+			if (markers[driver.conductor_id]) {
+				markers[driver.conductor_id]
+					.setLatLng([driver.lat, driver.lng])
+					.setPopupContent(createPopupContent(driver));
+			} else {
+				markers[driver.conductor_id] = L!.marker([driver.lat, driver.lng], {
+					icon: createDriverIcon(L!, driver.conductor.control)
+				}).addTo(map!)
+				.bindPopup(createPopupContent(driver));
+			}
+		});
+	};
 
-	// Función helper para crear iconos
+	// Crear icono
 	function createDriverIcon(
-		leaflet: typeof import('leaflet'),
-		color: string,
+		leaflet: typeof Leaflet,
 		control: string
-	): DivIcon {
+	): Leaflet.DivIcon {
 		return leaflet.divIcon({
 			className: 'driver-marker',
 			html: `
 				<div style="position: relative;">
-					<svg width="32" height="32" viewBox="0 0 32 32" fill="${color}" xmlns="http://www.w3.org/2000/svg">
+					<svg width="32" height="32" viewBox="0 0 32 32" fill="#3498db" xmlns="http://www.w3.org/2000/svg">
 						<path d="M16 0C10.48 0 6 4.48 6 10C6 16.6 16 32 16 32C16 32 26 16.6 26 10C26 4.48 21.52 0 16 0ZM16 15C13.24 15 11 12.76 11 10C11 7.24 13.24 5 16 5C18.76 5 21 7.24 21 10C21 12.76 18.76 15 16 15Z"/>
 					</svg>
 					<div style="position: absolute; 
@@ -220,7 +183,7 @@
 								background: white; 
 								border-radius: 50%; 
 								padding: 2px 5px;
-								border: 2px solid ${color};
+								border: 2px solid #3498db;
 								font-weight: bold;
 								font-size: 12px;">
 						${control}
@@ -232,98 +195,61 @@
 		});
 	}
 
-	// Función helper para contenido de popup
+	// Contenido de popup
 	function createPopupContent(driver: PosicionConductor): string {
 		return `
 			<b>${driver.conductor.nombre}</b><br>
 			Placa: ${driver.conductor.placa}<br>
 			Control: ${driver.conductor.control}<br>
-			Estado: ${formatEstado(driver.estado)}<br>
 			Propiedad: ${driver.conductor.propiedad}<br>
-			${driver.timestamp ? `Actualizado: ${new Date(driver.timestamp).toLocaleTimeString()}` : ''}
+			Actualizado: ${new Date(driver.timestamp).toLocaleTimeString()}
 		`;
 	}
 
-	// Funciones de utilidad
-	const getEstadoColor = (estado: EstadoConductor): string => {
-		const colors: Record<EstadoConductor, string> = {
-			en_servicio_colon: '#3498db',
-			en_servicio_ureña: '#2ecc71',
-			en_ruta_colon_ureña: '#f39c12',
-			en_ruta_ureña_colon: '#e74c3c',
-			accidentado: '#9b59b6',
-			descanso: '#95a5a6'
-		};
-		return colors[estado] ?? '#34495e';
-	};
-
-	const formatEstado = (estado: EstadoConductor): string => {
-		const estados: Record<EstadoConductor, string> = {
-			en_servicio_colon: 'En servicio (Colón)',
-			en_servicio_ureña: 'En servicio (Ureña)',
-			en_ruta_colon_ureña: 'En ruta (Colón → Ureña)',
-			en_ruta_ureña_colon: 'En ruta (Ureña → Colón)',
-			accidentado: 'Accidentado',
-			descanso: 'En descanso'
-		};
-		return estados[estado];
-	};
-
-	const getSession = async (): Promise<Session | null> => {
-		const { data, error } = await supabase.auth.getSession();
-		if (error) {
-			console.error('Error obteniendo sesión:', error);
-			return null;
-		}
-		session.set(data.session);
-		return data.session;
-	};
-
+	// Subscripciones
 	const setupSubscriptions = () => {
-  // Canal para cambios en posiciones
-  const positionsChannel = supabase
-    .channel('positions_changes')
-    .on(
-      'postgres_changes',
-      {
-        event: 'INSERT',
-        schema: 'public',
-        table: 'conductor_posiciones'
-      },
-      () => getActiveDrivers() // Actualizar todos los datos cuando hay nueva posición
-    )
-    .subscribe();
+		const channel = supabase
+			.channel('positions_changes')
+			.on(
+				'postgres_changes',
+				{
+					event: 'INSERT',
+					schema: 'public',
+					table: 'conductor_posiciones'
+				},
+				() => getActiveDrivers()
+			)
+			.subscribe();
 
-  return positionsChannel;
-};
+		return channel;
+	};
 
-	// Lifecycle hooks
+	// Ciclo de vida
 	onMount(() => {
-  let channel: ReturnType<typeof setupSubscriptions> | null = null;
+		let channel: ReturnType<typeof setupSubscriptions> | null = null;
 
-  const initialize = async () => {
-    await getSession();
-    const isMapReady = await initMap();
-    
-    if (isMapReady) {
-      setTimeout(() => {
-        map?.invalidateSize();
-        getActiveDrivers();
-      }, 500);
-    }
-    
-    channel = setupSubscriptions();
-    updateInterval = setInterval(getActiveDrivers, 30000); // Actualizar cada 30 segundos
-  };
+		const initialize = async () => {
+			const isMapReady = await initMap();
+			
+			if (isMapReady) {
+				setTimeout(() => {
+					map?.invalidateSize();
+					getActiveDrivers();
+				}, 500);
+			}
+			
+			channel = setupSubscriptions();
+			updateInterval = setInterval(getActiveDrivers, 30000);
+		};
 
-  initialize();
+		initialize();
 
-  return () => {
-    if (channel) supabase.removeChannel(channel);
-    if (updateInterval) clearInterval(updateInterval);
-    if (map) map.remove();
-  };
-});
+		return () => {
+			if (channel) supabase.removeChannel(channel);
+			if (updateInterval) clearInterval(updateInterval);
+			if (map) map.remove();
+		};
+	});
 
 	onDestroy(() => {
 		if (updateInterval) clearInterval(updateInterval);
@@ -340,414 +266,123 @@
 	/>
 </svelte:head>
 
-<ProtectedArea>
-	<div class="admin-container">
-		<nav class="admin-nav">
-			<div class="nav-header">
-				<h1>Panel de Administración</h1>
-				<div class="nav-controls">
-					<Lock />
-				</div>
+<div class="dashboard-container">
+	<div class="map-section">
+	  <div class="map-container">
+		<div bind:this={mapContainer} class="map-view">
+		  {#if !map}
+			<div class="map-loading">
+			  <div class="spinner"></div>
+			  <p>Inicializando mapa...</p>
 			</div>
-		</nav>
-
-		<main class="admin-content">
-			<div class="content-header">
-				<h2>Monitoreo de Conductores Activos</h2>
-				<div class="controls">
-					<button on:click={getActiveDrivers} class="refresh-btn" disabled={loading}>
-						{loading ? 'Cargando...' : 'Actualizar Datos'}
-					</button>
-				</div>
-			</div>
-
-			{#if errorMessage}
-				<div class="error-message">
-					{errorMessage}
-				</div>
-			{/if}
-
-			<div class="map-container">
-				<div bind:this={mapContainer} class="map-view">
-					{#if !map}
-						<div class="map-loading">
-							<div class="spinner"></div>
-							<p>Inicializando mapa...</p>
-						</div>
-					{/if}
-				</div>
-
-				<div class="drivers-info">
-					<h3>Conductores Activos: {driversData.length}</h3>
-					<div class="status-legend">
-						<div class="legend-item">
-							<span class="legend-color" style="background-color: #3498db;"></span>
-							<span>Colón</span>
-						</div>
-						<div class="legend-item">
-							<span class="legend-color" style="background-color: #2ecc71;"></span>
-							<span>Ureña</span>
-						</div>
-						<div class="legend-item">
-							<span class="legend-color" style="background-color: #f39c12;"></span>
-							<span>Ruta C→U</span>
-						</div>
-						<div class="legend-item">
-							<span class="legend-color" style="background-color: #e74c3c;"></span>
-							<span>Ruta U→C</span>
-						</div>
-						<div class="legend-item">
-							<span class="legend-color" style="background-color: #9b59b6;"></span>
-							<span>Accidentado</span>
-						</div>
-						<div class="legend-item">
-							<span class="legend-color" style="background-color: #95a5a6;"></span>
-							<span>Descanso</span>
-						</div>
-					</div>
-
-					<div class="drivers-list">
-						{#each driversData as driver}
-							<div
-								class="driver-card"
-								style="border-left: 4px solid {getEstadoColor(driver.estado)};"
-							>
-								<div class="driver-header">
-									<span class="driver-control">{driver.conductor.control}</span>
-									<span class="driver-status">{formatEstado(driver.estado)}</span>
-								</div>
-								<div class="driver-info">
-									<span class="driver-name">{driver.conductor.nombre}</span>
-									<span class="driver-placa">{driver.conductor.placa}</span>
-								</div>
-								<div class="driver-time">
-									{new Date(driver.timestamp).toLocaleTimeString()}
-								</div>
-							</div>
-						{:else}
-							<div class="no-drivers">No hay conductores activos en este momento</div>
-						{/each}
-					</div>
-				</div>
-			</div>
-		</main>
+		  {/if}
+		</div>
+	  </div>
 	</div>
-</ProtectedArea>
-
-<style>
-	.admin-container {
-  display: flex;
-  flex-direction: column;
-  min-height: 100vh;
-  background-color: #f5f7fa;
-  font-family: 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
-  overflow-x: hidden; /* Previene scroll horizontal */
-}
-
-.admin-nav {
-  background-color: #2c3e50;
-  color: white;
-  padding: 1rem 2rem;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-}
-
-.nav-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.nav-header h1 {
-  margin: 0;
-  font-size: 1.5rem;
-  font-weight: 500;
-}
-
-.nav-controls {
-  display: flex;
-  gap: 1rem;
-  align-items: center;
-}
-
-.admin-content {
-  flex: 1;
-  padding: 1.5rem;
-  overflow-y: auto; /* Permite scroll en contenido principal */
-}
-
-.content-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 1.5rem;
-}
-
-.content-header h2 {
-  margin: 0;
-  font-size: 1.3rem;
-  color: #2c3e50;
-}
-
-.controls {
-  display: flex;
-  gap: 1rem;
-}
-
-.refresh-btn {
-  padding: 0.5rem 1rem;
-  background-color: #3498db;
-  color: white;
-  border: none;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: all 0.2s;
-  font-size: 0.9rem;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.refresh-btn:hover:not(:disabled) {
-  background-color: #2980b9;
-  transform: translateY(-1px);
-}
-
-.refresh-btn:disabled {
-  opacity: 0.7;
-  cursor: not-allowed;
-}
-
-.error-message {
-  background-color: #f8d7da;
-  color: #721c24;
-  padding: 0.75rem 1rem;
-  border-radius: 6px;
-  margin-bottom: 1.5rem;
-  border: 1px solid #f5c6cb;
-}
-
-.map-container {
-  display: grid;
-  grid-template-columns: 2fr 1fr;
-  gap: 1.5rem;
-  height: calc(100vh - 200px);
-}
-
-.map-view {
-  width: 100%;
-  height: 100%;
-  min-height: 300px; /* Altura mínima garantizada */
-  border-radius: 8px;
-  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
-  position: relative;
-  background-color: #f8f9fa;
-  border: 1px solid #e0e6ed;
-  overflow: hidden;
-}
-
-.map-loading {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  background: rgba(255, 255, 255, 0.95);
-  border-radius: 8px;
-  font-weight: 500;
-  color: #4a5568;
-  z-index: 100;
-  gap: 1rem;
-}
-
-.spinner {
-  width: 2.5rem;
-  height: 2.5rem;
-  border: 3px solid rgba(0, 0, 0, 0.1);
-  border-radius: 50%;
-  border-top-color: #3498db;
-  animation: spin 1s ease-in-out infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-.drivers-info {
-  display: flex;
-  flex-direction: column;
-  gap: 1.5rem;
-  overflow-y: auto;
-  padding-right: 0.5rem;
-  height: 100%;
-}
-
-.status-legend {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 0.75rem;
-  background: white;
-  padding: 1rem;
-  border-radius: 8px;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
-}
-
-.legend-item {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: 0.85rem;
-}
-
-.legend-color {
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  display: inline-block;
-}
-
-.drivers-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-  overflow-y: auto;
-  flex: 1;
-}
-
-.driver-card {
-  background: white;
-  border-radius: 8px;
-  padding: 1rem;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
-  transition: transform 0.2s;
-}
-
-.driver-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
-}
-
-.driver-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 0.5rem;
-}
-
-.driver-control {
-  font-weight: bold;
-  color: #2c3e50;
-  font-size: 1.1rem;
-}
-
-.driver-status {
-  font-size: 0.8rem;
-  padding: 0.25rem 0.5rem;
-  border-radius: 12px;
-  background: #f1f1f1;
-}
-
-.driver-info {
-  display: flex;
-  justify-content: space-between;
-  margin-bottom: 0.5rem;
-}
-
-.driver-name {
-  font-weight: 500;
-}
-
-.driver-placa {
-  font-family: 'Roboto Mono', monospace;
-  background: #f1f1f1;
-  padding: 0.25rem 0.5rem;
-  border-radius: 4px;
-  font-size: 0.85rem;
-}
-
-.driver-time {
-  font-size: 0.8rem;
-  color: #7f8c8d;
-  text-align: right;
-}
-
-.no-drivers {
-  text-align: center;
-  padding: 2rem;
-  color: #95a5a6;
-  font-style: italic;
-  background: white;
-  border-radius: 8px;
-}
-
-/* Responsive - Versión corregida */
-@media (max-width: 1024px) {
-  .map-container {
-    grid-template-columns: 1fr;
-    height: auto;
-    min-height: 70vh; /* Altura mínima del viewport */
-  }
-
-  .drivers-info {
-    height: auto;
-    max-height: none;
-    overflow-y: visible;
-  }
-
-  .map-view {
-    height: 50vh;
-    min-height: 300px;
-  }
-}
-
-@media (max-width: 768px) {
-  .content-header {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 1rem;
-  }
-
-  .status-legend {
-    grid-template-columns: repeat(2, 1fr);
-  }
-
-  .map-view {
-    height: 40vh;
-  }
-
-  .admin-content {
-    padding: 1rem;
-  }
-}
-
-@media (max-width: 480px) {
-  .admin-nav {
-    padding: 1rem;
-  }
-
-  .nav-header h1 {
-    font-size: 1.3rem;
-  }
-
-  .status-legend {
-    grid-template-columns: 1fr;
-  }
-
-  .map-view {
-    height: 35vh;
-  }
-
-  .map-container {
-    gap: 1rem;
-  }
-
-  .drivers-list {
-    overflow-y: visible;
-  }
-}
-</style>
+  
+	<div class="status-section">
+	  <Estado />
+	</div>
+  
+	{#if errorMessage}
+	  <div class="error-message">{errorMessage}</div>
+	{/if}
+  </div>
+  
+  <style>
+	.dashboard-container {
+	  display: flex;
+	  flex-direction: column;
+	  min-height: 100vh;
+	  width: 100%;
+	  overflow: auto;
+	}
+  
+	.map-section {
+	  position: relative;
+	  width: 100%;
+	  height: 60vh; /* Altura del mapa reducida para dejar espacio al estado */
+	  min-height: 400px; /* Altura mínima para dispositivos pequeños */
+	}
+  
+	.map-container {
+	  width: 100%;
+	  height: 100%;
+	  position: relative;
+	}
+  
+	.map-view {
+	  width: 100%;
+	  height: 100%;
+	  border-radius: 8px;
+	  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+	}
+  
+	.status-section {
+	  flex: 1;
+	  padding: 1.5rem;
+	  width: 100%;
+	  overflow-y: auto;
+	}
+  
+	.map-loading {
+	  position: absolute;
+	  top: 0;
+	  left: 0;
+	  right: 0;
+	  bottom: 0;
+	  display: flex;
+	  flex-direction: column;
+	  align-items: center;
+	  justify-content: center;
+	  background: rgba(255, 255, 255, 0.9);
+	  z-index: 1000;
+	}
+  
+	.spinner {
+	  border: 4px solid rgba(0, 0, 0, 0.1);
+	  border-radius: 50%;
+	  border-top: 4px solid #3498db;
+	  width: 40px;
+	  height: 40px;
+	  animation: spin 1s linear infinite;
+	  margin-bottom: 1rem;
+	}
+  
+	@keyframes spin {
+	  0% { transform: rotate(0deg); }
+	  100% { transform: rotate(360deg); }
+	}
+  
+	.error-message {
+	  position: fixed;
+	  bottom: 20px;
+	  left: 50%;
+	  transform: translateX(-50%);
+	  background: #ff4444;
+	  color: white;
+	  padding: 0.75rem 1.5rem;
+	  border-radius: 4px;
+	  z-index: 1001;
+	  max-width: 90%;
+	  text-align: center;
+	}
+  
+	/* Responsive design */
+	@media (max-width: 768px) {
+	  .map-section {
+		height: 50vh;
+	  }
+	  
+	  .status-section {
+		padding: 1rem;
+	  }
+	}
+  
+	@media (max-width: 480px) {
+	  .map-section {
+		height: 45vh;
+		min-height: 300px;
+	  }
+	}
+  </style>
