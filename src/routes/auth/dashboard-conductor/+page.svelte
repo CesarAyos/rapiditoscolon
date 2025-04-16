@@ -1,9 +1,10 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { writable } from 'svelte/store';
 	import { browser } from '$app/environment';
 	import { supabase } from '../../../components/supabase';
 	import Lock from '../../../components/lock.svelte';
+	import type { Session, Subscription } from '@supabase/supabase-js';
 
 	type Conductor = {
 		id: number;
@@ -15,26 +16,27 @@
 		telefono?: string | null;
 	};
 
-	type EstadoConductor = {
-		id: number;
-		conductor_id: number;
-		estado: string;
-		descripcion?: string | null;
-	};
+	type EstadoPosible = 
+		| 'en_servicio_colon' 
+		| 'en_servicio_ureña'
+		| 'en_ruta_colon_ureña'
+		| 'en_ruta_ureña_colon'
+		| 'accidentado'
+		| 'descanso';
 
 	// Stores
 	const conductor = writable<Conductor | null>(null);
-	const estadoActual = writable<string>('Descanso');
+	const estadoActual = writable<EstadoPosible>('descanso');
 	const error = writable<string>('');
 	const isLoading = writable<boolean>(false);
-	const session = writable<any>(null);
+	const session = writable<Session | null>(null);
 
 	// Variables reactivas
 	let conductorData: Conductor | null = null;
-	let currentEstado: string = '';
-	let errorMessage: string = '';
-	let loading: boolean = false;
-	let currentSession: any = null;
+	let currentEstado: EstadoPosible = 'descanso';
+	let errorMessage = '';
+	let loading = false;
+	let currentSession: Session | null = null;
 
 	// Suscripciones
 	conductor.subscribe((value) => (conductorData = value));
@@ -43,90 +45,105 @@
 	isLoading.subscribe((value) => (loading = value));
 	session.subscribe((value) => (currentSession = value));
 
-	const getSession = async () => {
-		const { data, error } = await supabase.auth.getSession();
-		if (error) {
-			console.error('Error obteniendo sesión:', error);
+	const getSession = async (): Promise<Session | null> => {
+		try {
+			const { data, error: sbError } = await supabase.auth.getSession();
+			
+			if (sbError) throw sbError;
+			if (!data.session) return null;
+			
+			session.set(data.session);
+			return data.session;
+		} catch (err) {
+			console.error('Error en getSession:', err);
+			error.set(err instanceof Error ? err.message : 'Error de autenticación');
+			isLoading.set(false);
 			return null;
 		}
-		session.set(data.session);
-		return data.session;
 	};
 
-	const obtenerConductor = async () => {
+	const obtenerConductor = async (): Promise<boolean> => {
 		isLoading.set(true);
 		error.set('');
+		
 		try {
-			const session = await getSession();
-			if (!session?.user?.email) {
+			if (!currentSession?.user?.email) {
 				throw new Error('No hay usuario autenticado');
 			}
 
 			const { data, error: sbError } = await supabase
 				.from('conductor')
 				.select('*')
-				.eq('email', session.user.email)
+				.eq('email', currentSession.user.email)
 				.single();
 
 			if (sbError) throw sbError;
-			if (!data) {
-				throw new Error(`No se encontró conductor con email: ${session.user.email}`);
-			}
+			if (!data) throw new Error('Conductor no encontrado');
 
 			conductor.set(data);
 			await obtenerUltimoEstado(data.id);
+			return true;
 		} catch (err) {
 			console.error('Error en obtenerConductor:', err);
-			error.set(err instanceof Error ? err.message : 'Error desconocido');
+			error.set(err instanceof Error ? err.message : 'Error al cargar datos');
 			conductor.set(null);
+			return false;
 		} finally {
 			isLoading.set(false);
 		}
 	};
 
-	const obtenerUltimoEstado = async (conductorId: number) => {
+	const obtenerUltimoEstado = async (conductorId: number): Promise<void> => {
 		try {
 			const { data, error: sbError } = await supabase
 				.from('estado_conductor')
-				.select('estado, descripcion')
+				.select('estado')
 				.eq('conductor_id', conductorId)
+				.order('created_at', { ascending: false })
+				.limit(1)
 				.maybeSingle();
 
 			if (sbError) throw sbError;
 			
-			if (data) {
+			if (data?.estado && isValidEstado(data.estado)) {
 				estadoActual.set(data.estado);
-				return data.estado;
+			} else {
+				estadoActual.set('descanso');
 			}
-			
-			estadoActual.set('Descanso');
-			return 'Descanso';
 		} catch (err) {
 			console.error('Error obteniendo estado:', err);
 			error.set('Error al cargar estado actual');
-			return 'Descanso';
+			estadoActual.set('descanso');
 		}
 	};
 
-	const cambiarEstado = async (nuevoEstado: string, descripcion: string = '') => {
-		if (!conductorData) {
+	const isValidEstado = (estado: string): estado is EstadoPosible => {
+		return [
+			'en_servicio_colon',
+			'en_servicio_ureña',
+			'en_ruta_colon_ureña',
+			'en_ruta_ureña_colon',
+			'accidentado',
+			'descanso'
+		].includes(estado);
+	};
+
+	const cambiarEstado = async (nuevoEstado: EstadoPosible, descripcion: string = ''): Promise<void> => {
+		if (!conductorData?.id) {
 			error.set('No hay datos del conductor');
 			return;
 		}
 
 		isLoading.set(true);
-		error.set('');
-
+		
 		try {
-			const { error: dbError } = await supabase.from('estado_conductor').upsert(
-				{
+			const { error: dbError } = await supabase
+				.from('estado_conductor')
+				.insert({
 					conductor_id: conductorData.id,
 					estado: nuevoEstado,
-					descripcion: descripcion || null,
-					updated_at: new Date().toISOString()
-				},
-				{ onConflict: 'conductor_id' }
-			);
+					descripcion: descripcion || null
+				});
 
 			if (dbError) throw dbError;
 
@@ -135,7 +152,7 @@
 			setTimeout(() => error.set(''), 3000);
 		} catch (err) {
 			console.error('Error al cambiar estado:', err);
-			error.set('Error al actualizar estado');
+			error.set(err instanceof Error ? err.message : 'Error al actualizar estado');
 			setTimeout(() => error.set(''), 5000);
 		} finally {
 			isLoading.set(false);
@@ -143,26 +160,41 @@
 	};
 
 	onMount(() => {
-		(async () => {
-			try {
-				await getSession();
-				await obtenerConductor();
-			} catch (error) {
-				console.error('Error durante la inicialización:', error);
-			}
-		})();
+		let authListener: { subscription: Subscription } | null = null;
 
-		const authSubscription = supabase.auth.onAuthStateChange((event, session) => {
-			if (event === 'SIGNED_IN') {
-				obtenerConductor();
+		const initialize = async () => {
+			try {
+				const userSession = await getSession();
+				if (userSession) {
+					await obtenerConductor();
+				}
+			} catch (error) {
+				console.error('Error en inicialización:', error);
+				isLoading.set(false);
+			}
+		};
+
+		initialize();
+
+		// Configurar listener de autenticación con tipado correcto
+		const { data: authData } = supabase.auth.onAuthStateChange(async (event, authSession) => {
+			if (event === 'SIGNED_IN' && authSession) {
+				session.set(authSession); // Usamos el store session.set()
+				await obtenerConductor();
 			} else if (event === 'SIGNED_OUT') {
 				conductor.set(null);
-				estadoActual.set('Descanso');
+				estadoActual.set('descanso');
+				session.set(null);
+				error.set('');
 			}
 		});
 
+		authListener = authData;
+
 		return () => {
-			authSubscription.data?.subscription?.unsubscribe();
+			if (authListener?.subscription) {
+				authListener.subscription.unsubscribe();
+			}
 		};
 	});
 </script>
