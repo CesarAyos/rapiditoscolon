@@ -5,6 +5,8 @@
 	import { supabase } from '../../../../components/supabase';
 	import Lock from '../../../../components/lock.svelte';
 	import type { Session } from '@supabase/supabase-js';
+	import Estado from '../../../../components/estado.svelte';
+	
 
 	type Conductor = {
 		id: number;
@@ -14,13 +16,6 @@
 		control: string;
 		propiedad: string;
 		telefono?: string | null;
-		estado?:
-			| 'en_servicio_colon'
-			| 'en_servicio_ureña'
-			| 'en_ruta_colon_ureña'
-			| 'en_ruta_ureña_colon'
-			| 'accidentado'
-			| 'descanso';
 	};
 
 	type PosicionConductor = {
@@ -32,37 +27,17 @@
 		timestamp: string;
 	};
 
-	type DriverStatus = {
-		en_servicio_colon: Conductor[];
-		en_servicio_ureña: Conductor[];
-		en_ruta_colon_ureña: Conductor[];
-		en_ruta_ureña_colon: Conductor[];
-		accidentado: Conductor[];
-		descanso: Conductor[];
-	};
-
 	// Stores
 	const conductor = writable<Conductor | null>(null);
-	const estadoActual = writable<string>('descanso');
 	const error = writable<string>('');
 	const isLoading = writable<boolean>(false);
 	const session = writable<Session | null>(null);
 	const trackingActive = writable<boolean>(false);
 	const positionHistory = writable<PosicionConductor[]>([]);
 	const otherDrivers = writable<Conductor[]>([]);
-	const driverStatusStore = writable<DriverStatus>({
-		en_servicio_colon: [],
-		en_servicio_ureña: [],
-		en_ruta_colon_ureña: [],
-		en_ruta_ureña_colon: [],
-		accidentado: [],
-		descanso: []
-	});
-	const loadingStatus = writable<boolean>(false);
 
 	// Variables reactivas
 	let conductorData: Conductor | null = null;
-	let currentEstado: string = 'descanso';
 	let errorMessage: string = '';
 	let loading: boolean = false;
 	let currentSession: Session | null = null;
@@ -75,28 +50,18 @@
 	let drivers: Conductor[] = [];
 	let history: PosicionConductor[] = [];
 	let L: any = null;
-	let driverStatusData: DriverStatus = {
-		en_servicio_colon: [],
-		en_servicio_ureña: [],
-		en_ruta_colon_ureña: [],
-		en_ruta_ureña_colon: [],
-		accidentado: [],
-		descanso: []
-	};
-	let loadingDriverStatus = false;
 	let userInitiatedTracking = false;
+	let polyline: any = null; // Para la línea de recorrido
+	let positions: [number, number][] = []; // Almacena las coordenadas para la polilínea
 
 	// Suscripciones
 	conductor.subscribe((value) => (conductorData = value));
-	estadoActual.subscribe((value) => (currentEstado = value));
 	error.subscribe((value) => (errorMessage = value));
 	isLoading.subscribe((value) => (loading = value));
 	session.subscribe((value) => (currentSession = value));
 	trackingActive.subscribe((value) => (isTracking = value));
 	positionHistory.subscribe((value) => (history = value));
 	otherDrivers.subscribe((value) => (drivers = value));
-	driverStatusStore.subscribe((value) => (driverStatusData = value));
-	loadingStatus.subscribe((value) => (loadingDriverStatus = value));
 
 	// Inicializar mapa
 	const initMap = async (): Promise<boolean> => {
@@ -126,28 +91,45 @@
 	const updatePosition = async (lat: number, lng: number, accuracy?: number) => {
 		if (!map || !conductorData || !L) return;
 
+		// Agregar la nueva posición al historial
+		positions.push([lat, lng]);
+		
+		// Crear o actualizar la polilínea
+		if (isTracking) {
+			if (polyline) {
+				map.removeLayer(polyline);
+			}
+			
+			polyline = L.polyline(positions, {
+				color: '#3388ff',
+				weight: 5,
+				opacity: 0.7,
+				dashArray: '10, 10'
+			}).addTo(map);
+		}
+
 		if (!userMarker) {
 			userMarker = L.marker([lat, lng], {
 				icon: L.divIcon({
 					className: 'driver-marker',
 					html: `
-			  <div style="position: relative;">
-				<img src="https://cdn-icons-png.flaticon.com/512/4474/4474228.png" 
-					 style="width: 32px; height: 32px;"/>
-				<div style="position: absolute; 
-						   top: -10px; 
-						   left: 50%; 
-						   transform: translateX(-50%);
-						   background: white; 
-						   border-radius: 50%; 
-						   padding: 2px 5px;
-						   border: 2px solid #3388ff;
-						   font-weight: bold;
-						   font-size: 12px;">
-				  ${conductorData.control}
-				</div>
-			  </div>
-			`,
+					  <div style="position: relative;">
+						<img src="https://cdn-icons-png.flaticon.com/512/4474/4474228.png" 
+							 style="width: 32px; height: 32px;"/>
+						<div style="position: absolute; 
+								   top: -10px; 
+								   left: 50%; 
+								   transform: translateX(-50%);
+								   background: white; 
+								   border-radius: 50%; 
+								   padding: 2px 5px;
+								   border: 2px solid #3388ff;
+								   font-weight: bold;
+								   font-size: 12px;">
+						  ${conductorData.control}
+						</div>
+					  </div>
+					`,
 					iconSize: [32, 40],
 					iconAnchor: [16, 40]
 				}),
@@ -193,13 +175,11 @@
 				timestamp: new Date().toISOString()
 			};
 
-			// Primero intenta actualizar
 			const { error: updateError } = await supabase
 				.from('conductor_posiciones')
 				.update(positionData)
 				.eq('conductor_id', conductorData.id);
 
-			// Si no existe, inserta
 			if (updateError?.code === 'PGRST116') {
 				const { error: insertError } = await supabase
 					.from('conductor_posiciones')
@@ -216,23 +196,6 @@
 			} else {
 				error.set('Error al guardar posición');
 			}
-		}
-	};
-
-	// Limpiar posiciones antiguas
-	const limpiarPosicionesAntiguas = async () => {
-		if (!conductorData) return;
-
-		try {
-			const { error } = await supabase
-				.from('conductor_posiciones')
-				.delete()
-				.lt('timestamp', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
-				.eq('conductor_id', conductorData.id);
-
-			if (error) throw error;
-		} catch (err) {
-			console.error('Error limpiando posiciones antiguas:', err);
 		}
 	};
 
@@ -262,6 +225,13 @@
 	// Iniciar seguimiento continuo
 	const startTracking = () => {
 		if (!browser || !userInitiatedTracking) return;
+
+		// Limpiar la polilínea anterior al iniciar nuevo seguimiento
+		positions = [];
+		if (polyline) {
+			map.removeLayer(polyline);
+			polyline = null;
+		}
 
 		if (navigator.geolocation) {
 			watchId = navigator.geolocation.watchPosition(
@@ -313,107 +283,90 @@
 
 	// Obtener otros conductores
 	const getOtherDrivers = async () => {
-  if (!browser || !L || !map) return;
+		if (!browser || !L || !map) return;
 
-  try {
-    // Consulta optimizada con relaciones explícitas
-	const { data, error: sbError } = await supabase
-  .from('conductor_posiciones')
-  .select(`
-    conductor_id,
-    lat,
-    lng,
-    accuracy,
-    timestamp,
-    conductor!fk_conductor(id, nombre, placa, control, propiedad, telefono)
-  `)
-  .order('timestamp', { ascending: false })
-  .limit(50);
+		try {
+			const { data, error: sbError } = await supabase
+				.from('conductor_posiciones')
+				.select(`
+					conductor_id,
+					lat,
+					lng,
+					accuracy,
+					timestamp,
+					conductor!fk_conductor(id, nombre, placa, control, propiedad, telefono)
+				`)
+				.order('timestamp', { ascending: false })
+				.limit(50);
 
-    if (sbError) throw sbError;
-    if (!data) return;
+			if (sbError) throw sbError;
+			if (!data) return;
 
-    // Procesamiento de datos...
-    const uniqueDrivers = data.reduce((acc: any[], current) => {
-      if (!acc.some(item => item.conductor_id === current.conductor_id)) {
-        acc.push(current);
-      }
-      return acc;
-    }, []);
+			const uniqueDrivers = data.reduce((acc: any[], current) => {
+				if (!acc.some(item => item.conductor_id === current.conductor_id)) {
+					acc.push(current);
+				}
+				return acc;
+			}, []);
 
-    const activeDrivers = uniqueDrivers.filter(driver => 
-      driver.conductor_id !== conductorData?.id &&
-      driver.estado && 
-      [
-        'en_servicio_colon',
-        'en_servicio_ureña',
-        'en_ruta_colon_ureña',
-        'en_ruta_ureña_colon'
-      ].includes(driver.estado)
-    );
+			const activeDrivers = uniqueDrivers.filter(driver => 
+				driver.conductor_id !== conductorData?.id
+			);
 
-    // Actualización de marcadores...
-    Object.keys(otherMarkers).forEach(id => {
-      if (!activeDrivers.some(d => d.conductor_id === parseInt(id))) {
-        map.removeLayer(otherMarkers[parseInt(id)]);
-        delete otherMarkers[parseInt(id)];
-      }
-    });
+			Object.keys(otherMarkers).forEach(id => {
+				if (!activeDrivers.some(d => d.conductor_id === parseInt(id))) {
+					map.removeLayer(otherMarkers[parseInt(id)]);
+					delete otherMarkers[parseInt(id)];
+				}
+			});
 
-    activeDrivers.forEach(driver => {
-      const driverEstado = driver.estado || 'descanso';
-      const markerColor = driverEstado.includes('ureña') ? '#ff3333' : 
-                        driverEstado.includes('colon') ? '#3388ff' : 
-                        '#666666';
+			activeDrivers.forEach(driver => {
+				if (!otherMarkers[driver.conductor_id]) {
+					otherMarkers[driver.conductor_id] = L.marker([driver.lat, driver.lng], {
+						icon: L.divIcon({
+							html: `
+								<div style="position: relative;">
+									<img src="https://cdn-icons-png.flaticon.com/512/477/477103.png" 
+										 style="width: 32px; height: 32px;"/>
+									<div style="position: absolute; 
+											   top: -10px; 
+											   left: 50%; 
+											   transform: translateX(-50%);
+											   background: white; 
+											   border-radius: 50%; 
+											   padding: 2px 5px;
+											   border: 2px solid #666666;
+											   font-weight: bold;
+											   font-size: 12px;">
+										${driver.conductor.control}
+									</div>
+								</div>
+							`,
+							iconSize: [32, 40],
+							iconAnchor: [16, 40]
+						}),
+						title: driver.conductor.nombre
+					})
+						.addTo(map)
+						.bindPopup(
+							`<b>${driver.conductor.nombre}</b><br>
+							 Placa: ${driver.conductor.placa}<br>
+							 Control: ${driver.conductor.control}`
+						);
+				} else {
+					otherMarkers[driver.conductor_id].setLatLng([driver.lat, driver.lng]);
+				}
+			});
 
-      if (!otherMarkers[driver.conductor_id]) {
-        otherMarkers[driver.conductor_id] = L.marker([driver.lat, driver.lng], {
-          icon: L.divIcon({
-            html: `
-              <div style="position: relative;">
-                <img src="https://cdn-icons-png.flaticon.com/512/477/477103.png" 
-                     style="width: 32px; height: 32px;"/>
-                <div style="position: absolute; 
-                           top: -10px; 
-                           left: 50%; 
-                           transform: translateX(-50%);
-                           background: white; 
-                           border-radius: 50%; 
-                           padding: 2px 5px;
-                           border: 2px solid ${markerColor};
-                           font-weight: bold;
-                           font-size: 12px;">
-                  ${driver.conductor.control}
-                </div>
-              </div>
-            `,
-            iconSize: [32, 40],
-            iconAnchor: [16, 40]
-          }),
-          title: driver.conductor.nombre
-        })
-          .addTo(map)
-          .bindPopup(
-            `<b>${driver.conductor.nombre}</b><br>
-             Placa: ${driver.conductor.placa}<br>
-             Control: ${driver.conductor.control}<br>
-             Estado: ${driverEstado.replace(/_/g, ' ')}`
-          );
-      } else {
-        otherMarkers[driver.conductor_id].setLatLng([driver.lat, driver.lng]);
-      }
-    });
+			otherDrivers.set(activeDrivers.map(d => ({
+				...d.conductor
+			})));
 
-    otherDrivers.set(activeDrivers.map(d => ({
-      ...d.conductor,
-      estado: d.estado
-    })));
-
-  } catch (err) {
-    console.error('Error obteniendo otros conductores:', err);
-    error.set('Error al cargar otros conductores');
-  }
-};
+		} catch (err) {
+			console.error('Error obteniendo otros conductores:', err);
+			error.set('Error al cargar otros conductores');
+		}
+	};
 
 	// Obtener sesión actual
 	const getSession = async (): Promise<Session | null> => {
@@ -448,7 +401,6 @@
 			}
 
 			conductor.set(data);
-			await obtenerUltimoEstado(data.id);
 		} catch (err) {
 			console.error('Error en obtenerConductor:', err);
 			if (err instanceof Error) {
@@ -462,191 +414,6 @@
 		}
 	};
 
-	// Obtener último estado del conductor
-	const obtenerUltimoEstado = async (conductorId: number) => {
-		try {
-			const { data, error: sbError } = await supabase
-				.from('estado_conductor')
-				.select('estado, descripcion')
-				.eq('conductor_id', conductorId)
-				.order('created_at', { ascending: false })
-				.limit(1)
-				.maybeSingle();
-
-			if (sbError) throw sbError;
-
-			if (data) {
-				estadoActual.set(data.estado);
-				return data.estado;
-			}
-
-			estadoActual.set('descanso');
-			return 'descanso';
-		} catch (err) {
-			console.error('Error obteniendo estado:', err);
-			error.set('Error al cargar estado actual');
-			return 'descanso';
-		}
-	};
-
-	// Actualizar estado del conductor
-	const actualizarEstadoConductor = async (nuevoEstado: string, descripcion?: string) => {
-		if (!conductorData) return false;
-
-		try {
-			const { error } = await supabase.from('estado_conductor').insert({
-				conductor_id: conductorData.id,
-				estado: nuevoEstado,
-				descripcion: descripcion || null
-			});
-
-			if (error) throw error;
-
-			estadoActual.set(nuevoEstado);
-			await loadDriverStatus();
-			return true;
-		} catch (err) {
-			console.error('Error actualizando estado:', err);
-			if (err instanceof Error) {
-				error.set(err.message);
-			} else {
-				error.set('Error al actualizar estado');
-			}
-			return false;
-		}
-	};
-
-	const requestLocationPermission = async (): Promise<boolean> => {
-		if (!browser) return false;
-
-		try {
-			// Para Android/Chrome
-			if (navigator.permissions) {
-				const permissionStatus = await navigator.permissions.query({ name: 'geolocation' });
-
-				if (permissionStatus.state === 'granted') {
-					enableTracking();
-					return true;
-				} else if (permissionStatus.state === 'prompt') {
-					return new Promise((resolve) => {
-						navigator.geolocation.getCurrentPosition(
-							() => {
-								enableTracking();
-								resolve(true);
-							},
-							(err) => {
-								console.error('Permiso denegado:', err);
-								error.set('Se necesitan permisos de ubicación para el seguimiento');
-								resolve(false);
-							},
-							{ enableHighAccuracy: true }
-						);
-					});
-				}
-			}
-			// Para Safari y otros navegadores
-			else {
-				return new Promise((resolve) => {
-					navigator.geolocation.getCurrentPosition(
-						() => {
-							enableTracking();
-							resolve(true);
-						},
-						(err) => {
-							console.error('Error al obtener ubicación:', err);
-							error.set('Error al obtener ubicación: ' + err.message);
-							resolve(false);
-						},
-						{ enableHighAccuracy: true }
-					);
-				});
-			}
-		} catch (err) {
-			console.error('Error en permisos:', err);
-			error.set('Error al verificar permisos de ubicación');
-			return false;
-		}
-		return false;
-	};
-
-	// Cargar estado de todos los conductores
-	const loadDriverStatus = async () => {
-		loadingStatus.set(true);
-		try {
-			const { data: ultimosEstados, error: estadosError } = await supabase
-				.from('estado_conductor')
-				.select(
-					`
-			conductor_id,
-			estado,
-			conductor:conductor!estado_conductor_conductor_id_fkey(
-			  id, nombre, placa, email, control, propiedad, telefono
-			)
-		  `
-				)
-				.order('created_at', { ascending: false });
-
-			if (estadosError) throw estadosError;
-			if (!ultimosEstados) throw new Error('No se encontraron estados');
-
-			const conductoresPorId = ultimosEstados.reduce((acc, current) => {
-				if (!acc.has(current.conductor_id)) {
-					acc.set(current.conductor_id, {
-						...current.conductor,
-						estado: current.estado
-					});
-				}
-				return acc;
-			}, new Map<number, any>());
-
-			const conductores = Array.from(conductoresPorId.values());
-
-			const statusData: DriverStatus = {
-				en_servicio_colon: [],
-				en_servicio_ureña: [],
-				en_ruta_colon_ureña: [],
-				en_ruta_ureña_colon: [],
-				accidentado: [],
-				descanso: []
-			};
-
-			conductores.forEach((conductor) => {
-				const estado = conductor.estado || 'descanso';
-
-				switch (estado) {
-					case 'en_servicio_colon':
-						statusData.en_servicio_colon.push(conductor);
-						break;
-					case 'en_servicio_ureña':
-						statusData.en_servicio_ureña.push(conductor);
-						break;
-					case 'en_ruta_colon_ureña':
-						statusData.en_ruta_colon_ureña.push(conductor);
-						break;
-					case 'en_ruta_ureña_colon':
-						statusData.en_ruta_ureña_colon.push(conductor);
-						break;
-					case 'accidentado':
-						statusData.accidentado.push(conductor);
-						break;
-					default:
-						statusData.descanso.push(conductor);
-				}
-			});
-
-			driverStatusStore.set(statusData);
-		} catch (err) {
-			console.error('Error al cargar estados:', err);
-			if (err instanceof Error) {
-				error.set(err.message);
-			} else {
-				error.set('Error al cargar estados de conductores');
-			}
-		} finally {
-			loadingStatus.set(false);
-		}
-	};
-
 	// Configurar suscripciones a cambios en tiempo real
 	const setupSubscriptions = async () => {
 		try {
@@ -657,14 +424,12 @@
 
 				if (event === 'SIGNED_IN') {
 					await obtenerConductor();
-					await loadDriverStatus();
 					if (conductorData) {
 						getCurrentPosition();
 						await getOtherDrivers();
 					}
 				} else if (event === 'SIGNED_OUT') {
 					conductor.set(null);
-					estadoActual.set('descanso');
 					stopTracking();
 				}
 			});
@@ -688,25 +453,6 @@
 						}
 					}
 				)
-				.on(
-					'postgres_changes',
-					{
-						event: '*',
-						schema: 'public',
-						table: 'estado_conductor'
-					},
-					async (payload) => {
-						await loadDriverStatus();
-						if (
-							payload.new &&
-							'conductor_id' in payload.new &&
-							payload.new.conductor_id === conductorData?.id &&
-							'estado' in payload.new
-						) {
-							estadoActual.set(payload.new.estado as string);
-						}
-					}
-				)
 				.subscribe();
 
 			return { authSubscription: authData.subscription, realtimeSubscription: channel };
@@ -727,7 +473,7 @@
 				await getSession();
 				await new Promise((resolve) => setTimeout(resolve, 50));
 				await obtenerConductor();
-				await Promise.all([initMap(), loadDriverStatus()]);
+				await initMap();
 
 				const subscriptions = await setupSubscriptions();
 				authSubscription = subscriptions.authSubscription;
@@ -738,13 +484,9 @@
 					await getOtherDrivers();
 				}
 
-				await limpiarPosicionesAntiguas();
-				setInterval(limpiarPosicionesAntiguas, 60 * 60 * 1000);
-
 				updateInterval = setInterval(async () => {
 					try {
 						await getOtherDrivers();
-						await loadDriverStatus();
 					} catch (error) {
 						console.error('Error in update interval:', error);
 					}
@@ -784,11 +526,6 @@
 			map = null;
 		}
 	});
-
-	// Función para recargar la página
-	const recargarPagina = () => {
-		window.location.reload();
-	};
 </script>
 
 <svelte:head>
@@ -817,16 +554,14 @@
 			{/if}
 		</div>
 	</nav>
-	<button on:click={recargarPagina} class="reload-btn mt-2 btn btn-info">
-		↻ Recargar para ver estado de conductores
-	</button>
+	
 	<main class="dashboard-content">
 		<div class="content-wrapper">
 			<div class="map-controls">
 				<button
 					on:click|preventDefault={async () => {
 						if (!map) await initMap();
-						await requestLocationPermission();
+						enableTracking();
 					}}
 					class:active={isTracking}
 					disabled={!browser}
@@ -845,6 +580,19 @@
 				>
 					🔄 Actualizar ubicación
 				</button>
+				<button
+					on:click={() => {
+						if (polyline) {
+							map.removeLayer(polyline);
+							polyline = null;
+							positions = [];
+						}
+					}}
+					class="map-btn"
+					disabled={!isTracking || !polyline}
+				>
+					🧹 Limpiar ruta
+				</button>
 			</div>
 
 			<div bind:this={mapContainer} class="map-view">
@@ -858,7 +606,7 @@
 
 			{#if drivers.length > 0}
 				<div class="drivers-panel">
-					<h3>Conductores en Servicio ({drivers.length})</h3>
+					<h3>Conductores Activos ({drivers.length})</h3>
 					<div class="drivers-list">
 						{#each drivers as driver}
 							<div class="driver-item">
@@ -872,103 +620,9 @@
 			{/if}
 		</div>
 	</main>
+	<Estado />
 </div>
 
-<div class="status-section">
-	<div class="status-header">
-		<h2>Estado de Conductores</h2>
-		<button on:click={loadDriverStatus} class="refresh-btn">
-			<!-- Icono SVG... -->
-			Actualizar
-		</button>
-	</div>
-
-	{#if loadingDriverStatus}
-		<div class="loading-spinner">
-			<div class="spinner"></div>
-		</div>
-	{:else}
-		<div class="status-grid">
-			<div class="status-card">
-				<h3>En servicio Colón</h3>
-				{#each driverStatusData.en_servicio_colon as driver}
-					<div class="driver-status-item">
-						<span class="driver-name">{driver.nombre}</span>
-						<span class="driver-placa">{driver.placa}</span>
-						<span class="driver-placa">control:{driver.control}</span>
-					</div>
-				{:else}
-					<p class="no-drivers">No hay conductores en esta ruta</p>
-				{/each}
-			</div>
-
-			<div class="status-card">
-				<h3>En servicio Ureña</h3>
-				{#each driverStatusData.en_servicio_ureña as driver}
-					<div class="driver-status-item">
-						<span class="driver-name">{driver.nombre}</span>
-						<span class="driver-placa">{driver.placa}</span>
-						<span class="driver-placa">control:{driver.control}</span>
-					</div>
-				{:else}
-					<p class="no-drivers">No hay conductores en esta ruta</p>
-				{/each}
-			</div>
-
-			<div class="status-card">
-				<h3>Ruta Colón - Ureña</h3>
-				{#each driverStatusData.en_ruta_colon_ureña as driver}
-					<div class="driver-status-item">
-						<span class="driver-name">{driver.nombre}</span>
-						<span class="driver-placa">{driver.placa}</span>
-						<span class="driver-placa">control:{driver.control}</span>s
-					</div>
-				{:else}
-					<p class="no-drivers">No hay conductores en esta ruta</p>
-				{/each}
-			</div>
-
-			<div class="status-card">
-				<h3>Ruta Ureña - Colón</h3>
-				{#each driverStatusData.en_ruta_ureña_colon as driver}
-					<div class="driver-status-item">
-						<span class="driver-name">{driver.nombre}</span>
-						<span class="driver-placa">{driver.placa}</span>
-						<span class="driver-placa">control:{driver.control}</span>s
-					</div>
-				{:else}
-					<p class="no-drivers">No hay conductores en esta ruta</p>
-				{/each}
-			</div>
-
-			<div class="status-card">
-				<h3>Accidentados</h3>
-				{#each driverStatusData.accidentado as driver}
-					<div class="driver-status-item">
-						<span class="driver-name">{driver.nombre}</span>
-						<span class="driver-placa">{driver.placa}</span>
-						<span class="driver-placa">control:{driver.control}</span>
-					</div>
-				{:else}
-					<p class="no-drivers">No hay conductores accidentados</p>
-				{/each}
-			</div>
-
-			<div class="status-card">
-				<h3>En Descanso</h3>
-				{#each driverStatusData.descanso as driver}
-					<div class="driver-status-item">
-						<span class="driver-name">{driver.nombre}</span>
-						<span class="driver-placa">{driver.placa}</span>
-						<span class="driver-placa">control:{driver.control}</span>
-					</div>
-				{:else}
-					<p class="no-drivers">No hay conductores en descanso</p>
-				{/each}
-			</div>
-		</div>
-	{/if}
-</div>
 
 <style>
 	.dashboard-container {
@@ -1081,7 +735,7 @@
 		flex-wrap: wrap;
 	}
 
-	.map-btn {
+	button {
 		padding: 0.65rem 1.25rem;
 		border: none;
 		border-radius: 6px;
@@ -1097,15 +751,18 @@
 		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 	}
 
-	.map-btn:hover:not(:disabled) {
+	button:hover:not(:disabled) {
 		background-color: #bbdefb;
 		transform: translateY(-1px);
 		box-shadow: 0 2px 5px rgba(0, 0, 0, 0.15);
 	}
 
-	
+	button.active {
+		background-color: #bbdefb;
+		font-weight: 600;
+	}
 
-	.map-btn:disabled {
+	button:disabled {
 		opacity: 0.6;
 		cursor: not-allowed;
 		background-color: #edf2f7;
@@ -1212,7 +869,7 @@
 			flex-direction: column;
 		}
 
-		.map-btn {
+		button {
 			width: 100%;
 			justify-content: center;
 		}
@@ -1226,133 +883,6 @@
 			flex-direction: column;
 			align-items: flex-start;
 			gap: 0.5rem;
-		}
-	}
-
-	.status-section {
-		margin-top: 2rem;
-		background: white;
-		border-radius: 10px;
-		padding: 1.5rem;
-		box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
-	}
-
-	.status-header {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		margin-bottom: 1.5rem;
-	}
-
-	.status-header h2 {
-		margin: 0;
-		font-size: 1.4rem;
-		color: #2c3e50;
-	}
-
-	.refresh-btn {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		padding: 0.5rem 1rem;
-		background-color: #3498db;
-		color: white;
-		border: none;
-		border-radius: 6px;
-		cursor: pointer;
-		transition: all 0.2s;
-		font-size: 0.9rem;
-	}
-
-	.refresh-btn:hover {
-		background-color: #2980b9;
-		transform: translateY(-1px);
-	}
-
-	@keyframes spin {
-		from {
-			transform: rotate(0deg);
-		}
-		to {
-			transform: rotate(360deg);
-		}
-	}
-
-	.status-grid {
-		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-		gap: 1.5rem;
-	}
-
-	.status-card {
-		background: #f8f9fa;
-		border-radius: 8px;
-		padding: 1rem;
-		border-left: 4px solid #3498db;
-	}
-
-	.status-card h3 {
-		margin: 0 0 1rem 0;
-		font-size: 1.1rem;
-		color: #2c3e50;
-		padding-bottom: 0.5rem;
-		border-bottom: 1px solid #e0e6ed;
-	}
-
-	.driver-status-item {
-		display: flex;
-		justify-content: space-between;
-		padding: 0.5rem 0;
-		font-size: 0.9rem;
-	}
-
-	.driver-status-item:not(:last-child) {
-		border-bottom: 1px dashed #e0e6ed;
-	}
-
-	.no-drivers {
-		color: #718096;
-		font-size: 0.9rem;
-		font-style: italic;
-		margin: 0.5rem 0;
-	}
-
-	.loading-spinner {
-		display: flex;
-		justify-content: center;
-		padding: 2rem;
-	}
-
-	.spinner {
-		width: 2rem;
-		height: 2rem;
-		border: 3px solid rgba(0, 0, 0, 0.1);
-		border-radius: 50%;
-		border-top-color: #3498db;
-		animation: spin 1s ease-in-out infinite;
-	}
-
-	/* Responsive adjustments */
-	@media (max-width: 768px) {
-		.status-grid {
-			grid-template-columns: 1fr 1fr;
-		}
-	}
-
-	@media (max-width: 480px) {
-		.status-grid {
-			grid-template-columns: 1fr;
-		}
-
-		.status-header {
-			flex-direction: column;
-			align-items: flex-start;
-			gap: 1rem;
-		}
-
-		.refresh-btn {
-			width: 100%;
-			justify-content: center;
 		}
 	}
 </style>
