@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount, onDestroy, tick } from 'svelte';
 	import { writable } from 'svelte/store';
 	import { browser } from '$app/environment';
 	import { supabase } from '../../../../../components/supabase';
@@ -40,6 +40,7 @@
 	let mapContainer: HTMLDivElement | undefined;
 	let L: typeof Leaflet | null = null;
 	let updateInterval: NodeJS.Timeout | null = null;
+	let mapInitialized = false;
 
 	// Suscripciones
 	activeDrivers.subscribe((value) => (driversData = value));
@@ -56,28 +57,42 @@
 	}
 
 	const initMap = async (): Promise<boolean> => {
-		if (!browser || !mapContainer) return false;
+        if (!browser || !mapContainer) return false;
 
-		try {
-			const leaflet = await ensureLeafletLoaded();
+        try {
+            const leaflet = await ensureLeafletLoaded();
 
-			if (!map) {
-				map = leaflet.map(mapContainer).setView([8.036238470951442, -72.25267803530193], 13);
-				leaflet
-					.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-						attribution: '&copy; OpenStreetMap contributors'
-					})
-					.addTo(map);
+            // Limpiar mapa existente si hay uno
+            if (map) {
+                map.remove();
+                map = null;
+            }
 
-				setTimeout(() => map?.invalidateSize(), 100);
-			}
-			return true;
-		} catch (err) {
-			console.error('Error al inicializar mapa:', err);
-			error.set('Error al cargar el mapa');
-			return false;
-		}
-	};
+            // Esperar a que el contenedor esté listo
+            await tick();
+
+            map = leaflet.map(mapContainer, {
+                preferCanvas: true
+            }).setView([8.036238470951442, -72.25267803530193], 13);
+
+            leaflet.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; OpenStreetMap contributors'
+            }).addTo(map);
+
+            // Forzar redimensionamiento
+            setTimeout(() => {
+                map?.invalidateSize();
+                mapInitialized = true;
+            }, 100);
+
+            return true;
+        } catch (err) {
+            console.error('Error al inicializar mapa:', err);
+            error.set('Error al cargar el mapa: ' + (err as Error).message);
+            return false;
+        }
+    };
+
 
 	// Obtener conductores activos
 	const getActiveDrivers = async () => {
@@ -226,35 +241,35 @@
 
 	// Ciclo de vida
 	onMount(() => {
-		let channel: ReturnType<typeof setupSubscriptions> | null = null;
+        let channel: ReturnType<typeof setupSubscriptions> | null = null;
 
-		const initialize = async () => {
-			const isMapReady = await initMap();
-			
-			if (isMapReady) {
-				setTimeout(() => {
-					map?.invalidateSize();
-					getActiveDrivers();
-				}, 500);
-			}
-			
-			channel = setupSubscriptions();
-			updateInterval = setInterval(getActiveDrivers, 30000);
-		};
+        const initialize = async () => {
+            await initMap();
+            getActiveDrivers();
+            channel = setupSubscriptions();
+            updateInterval = setInterval(getActiveDrivers, 30000);
+        };
 
-		initialize();
+        initialize();
 
-		return () => {
-			if (channel) supabase.removeChannel(channel);
-			if (updateInterval) clearInterval(updateInterval);
-			if (map) map.remove();
-		};
-	});
+        return () => {
+            if (channel) supabase.removeChannel(channel);
+            if (updateInterval) clearInterval(updateInterval);
+            if (map) {
+                map.remove();
+                map = null;
+            }
+            mapInitialized = false;
+        };
+    });
 
 	onDestroy(() => {
-		if (updateInterval) clearInterval(updateInterval);
-		map?.remove();
-	});
+    if (map) {
+        map.remove();
+        map = null;
+    }
+    if (updateInterval) clearInterval(updateInterval);
+});
 </script>
 
 <svelte:head>
@@ -267,18 +282,38 @@
 </svelte:head>
 
 <div class="dashboard-container">
-	<div class="map-section">
-	  <div class="map-container">
-		<div bind:this={mapContainer} class="map-view">
-		  {#if !map}
-			<div class="map-loading">
-			  <div class="spinner"></div>
-			  <p>Inicializando mapa...</p>
+	<div class="dashboard-container">
+		<!-- Añade un botón de recarga -->
+		<button 
+			on:click={() => {
+				if (map) {
+					map.remove();
+					map = null;
+				}
+				initMap();
+				getActiveDrivers();
+			}}
+			class="refresh-btn"
+		>
+			🔄 Recargar Mapa
+		</button>
+	
+		<div class="map-section">
+			<div class="map-container">
+				<div 
+					bind:this={mapContainer} 
+					class="map-view"
+					style="height: 70vh; width: 100%;"
+				>
+					{#if !mapInitialized}
+						<div class="map-loading">
+							<div class="spinner"></div>
+							<p>Inicializando mapa...</p>
+						</div>
+					{/if}
+				</div>
 			</div>
-		  {/if}
 		</div>
-	  </div>
-	</div>
   
 	<div class="status-section">
 	  <Estado />
@@ -288,8 +323,41 @@
 	  <div class="error-message">{errorMessage}</div>
 	{/if}
   </div>
+</div>
   
   <style>
+
+.map-view {
+        width: 100% !important;
+        height: 70vh !important;
+        min-height: 400px;
+        background: #f0f0f0;
+    }
+
+    .map-container {
+        width: 100%;
+        height: 100%;
+        position: relative;
+    }
+
+    .refresh-btn {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        z-index: 1000;
+        padding: 8px 12px;
+        background: white;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        cursor: pointer;
+    }
+
+    .refresh-btn:hover {
+        background: #f0f0f0;
+    }
+
+
+
 	.dashboard-container {
 	  display: flex;
 	  flex-direction: column;

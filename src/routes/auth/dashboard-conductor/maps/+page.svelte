@@ -593,6 +593,13 @@
 				>
 					🧹 Limpiar ruta
 				</button>
+				<button
+    on:click={() => window.location.reload()}
+    class="map-btn"
+    title="Recargar la página"
+>
+    🔄 Recargar para ver estados de conductores
+</button>
 			</div>
 
 			<div bind:this={mapContainer} class="map-view">
