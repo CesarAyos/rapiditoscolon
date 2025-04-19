@@ -249,7 +249,7 @@
 			await initMap();
 			getActiveDrivers();
 			channel = setupSubscriptions();
-			updateInterval = setInterval(getActiveDrivers, 30000);
+			updateInterval = setInterval(getActiveDrivers, 10000);
 		};
 
 		initialize();
