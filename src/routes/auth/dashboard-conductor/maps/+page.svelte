@@ -6,7 +6,6 @@
 	import Lock from '../../../../components/lock.svelte';
 	import type { Session } from '@supabase/supabase-js';
 	import Estado from '../../../../components/estado.svelte';
-	
 
 	type Conductor = {
 		id: number;
@@ -19,7 +18,7 @@
 	};
 
 	type PosicionConductor = {
-		id: number;
+		id?: number;
 		conductor_id: number;
 		lat: number;
 		lng: number;
@@ -51,8 +50,8 @@
 	let history: PosicionConductor[] = [];
 	let L: any = null;
 	let userInitiatedTracking = false;
-	let polyline: any = null; // Para la línea de recorrido
-	let positions: [number, number][] = []; // Almacena las coordenadas para la polilínea
+	let polyline: any = null;
+	let positions: [number, number][] = [];
 
 	// Suscripciones
 	conductor.subscribe((value) => (conductorData = value));
@@ -87,115 +86,145 @@
 		}
 	};
 
-	// Actualizar posición en el mapa
-	const updatePosition = async (lat: number, lng: number, accuracy?: number) => {
-		if (!map || !conductorData || !L) return;
-
-		// Agregar la nueva posición al historial
-		positions.push([lat, lng]);
-		
-		// Crear o actualizar la polilínea
-		if (isTracking) {
-			if (polyline) {
-				map.removeLayer(polyline);
-			}
-			
-			polyline = L.polyline(positions, {
-				color: '#3388ff',
-				weight: 5,
-				opacity: 0.7,
-				dashArray: '10, 10'
-			}).addTo(map);
-		}
-
-		if (!userMarker) {
-			userMarker = L.marker([lat, lng], {
-				icon: L.divIcon({
-					className: 'driver-marker',
-					html: `
-					  <div style="position: relative;">
-						<img src="https://cdn-icons-png.flaticon.com/512/4474/4474228.png" 
-							 style="width: 32px; height: 32px;"/>
-						<div style="position: absolute; 
-								   top: -10px; 
-								   left: 50%; 
-								   transform: translateX(-50%);
-								   background: white; 
-								   border-radius: 50%; 
-								   padding: 2px 5px;
-								   border: 2px solid #3388ff;
-								   font-weight: bold;
-								   font-size: 12px;">
-						  ${conductorData.control}
-						</div>
-					  </div>
-					`,
-					iconSize: [32, 40],
-					iconAnchor: [16, 40]
-				}),
-				zIndexOffset: 1000
-			})
-				.addTo(map)
-				.bindPopup(
-					`<b>${conductorData.nombre}</b><br>Placa: ${conductorData.placa}<br>Control: ${conductorData.control}`
-				);
-		} else {
-			userMarker.setLatLng([lat, lng]);
-		}
-
-		map.setView([lat, lng], 15);
-
-		if (accuracy) {
-			if (userMarker.accuracyCircle) {
-				map.removeLayer(userMarker.accuracyCircle);
-			}
-
-			userMarker.accuracyCircle = L.circle([lat, lng], {
-				radius: accuracy,
-				fillOpacity: 0.2,
-				color: '#3388ff',
-				fillColor: '#3388ff'
-			}).addTo(map);
-		}
-
-		await savePosition(lat, lng, accuracy);
-		await getOtherDrivers();
-	};
-
-	// Guardar posición en la base de datos
+	// Guardar posición en la base de datos (CORREGIDO)
 	const savePosition = async (lat: number, lng: number, accuracy?: number) => {
-		if (!conductorData) return;
+		if (!conductorData) {
+			console.error('No hay datos de conductor');
+			return;
+		}
+
+		const positionData: PosicionConductor = {
+			conductor_id: conductorData.id,
+			lat,
+			lng,
+			accuracy,
+			timestamp: new Date().toISOString()
+		};
+
+		console.log('Intentando guardar posición:', positionData);
 
 		try {
-			const positionData = {
-				conductor_id: conductorData.id,
-				lat,
-				lng,
-				accuracy,
-				timestamp: new Date().toISOString()
-			};
-
-			const { error: updateError } = await supabase
+			// Usamos upsert en lugar de update/insert separados
+			const { data, error: upsertError } = await supabase
 				.from('conductor_posiciones')
-				.update(positionData)
-				.eq('conductor_id', conductorData.id);
+				.upsert(positionData, { onConflict: 'conductor_id' });
 
-			if (updateError?.code === 'PGRST116') {
-				const { error: insertError } = await supabase
+			if (upsertError) {
+				throw upsertError;
+			}
+
+			console.log('Posición guardada exitosamente:', data);
+			return data;
+		} catch (err) {
+			console.error('Error en savePosition:', err);
+			
+			// Intento alternativo con insert directo
+			try {
+				console.log('Intentando insert directo como fallback');
+				const { data, error: insertError } = await supabase
 					.from('conductor_posiciones')
-					.insert(positionData);
+					.insert(positionData)
+					.select();
 
 				if (insertError) throw insertError;
-			} else if (updateError) {
-				throw updateError;
+				
+				console.log('Posición insertada exitosamente (fallback):', data);
+				return data;
+			} catch (fallbackErr) {
+				console.error('Error en fallback insert:', fallbackErr);
+				error.set(`Error al guardar posición:`);
+				throw fallbackErr;
 			}
-		} catch (err) {
-			console.error('Error guardando posición:', err);
-			if (err instanceof Error) {
-				error.set(err.message);
+		}
+	};
+
+	// Actualizar posición en el mapa
+	const updatePosition = async (lat: number, lng: number, accuracy?: number) => {
+		if (!map || !conductorData || !L) {
+			console.error('Faltan dependencias para updatePosition');
+			return;
+		}
+
+		try {
+			// Agregar la nueva posición al historial
+			positions.push([lat, lng]);
+			
+			// Crear o actualizar la polilínea
+			if (isTracking) {
+				if (polyline) {
+					map.removeLayer(polyline);
+				}
+				
+				polyline = L.polyline(positions, {
+					color: '#3388ff',
+					weight: 5,
+					opacity: 0.7,
+					dashArray: '10, 10'
+				}).addTo(map);
+			}
+
+			// Actualizar o crear marcador
+			if (!userMarker) {
+				userMarker = L.marker([lat, lng], {
+					icon: L.divIcon({
+						className: 'driver-marker',
+						html: `
+							<div style="position: relative;">
+								<img src="https://cdn-icons-png.flaticon.com/512/4474/4474228.png" 
+									 style="width: 32px; height: 32px;"/>
+								<div style="position: absolute; 
+										   top: -10px; 
+										   left: 50%; 
+										   transform: translateX(-50%);
+										   background: white; 
+										   border-radius: 50%; 
+										   padding: 2px 5px;
+										   border: 2px solid #3388ff;
+										   font-weight: bold;
+										   font-size: 12px;">
+									${conductorData.control}
+								</div>
+							</div>
+						`,
+						iconSize: [32, 40],
+						iconAnchor: [16, 40]
+					}),
+					zIndexOffset: 1000
+				})
+					.addTo(map)
+					.bindPopup(
+						`<b>${conductorData.nombre}</b><br>Placa: ${conductorData.placa}<br>Control: ${conductorData.control}`
+					);
 			} else {
-				error.set('Error al guardar posición');
+				userMarker.setLatLng([lat, lng]);
 			}
+
+			map.setView([lat, lng], 15);
+
+			if (accuracy) {
+				if (userMarker.accuracyCircle) {
+					map.removeLayer(userMarker.accuracyCircle);
+				}
+
+				userMarker.accuracyCircle = L.circle([lat, lng], {
+					radius: accuracy,
+					fillOpacity: 0.2,
+					color: '#3388ff',
+					fillColor: '#3388ff'
+				}).addTo(map);
+			}
+
+			// Guardar posición en la base de datos
+			const savedPosition = await savePosition(lat, lng, accuracy);
+			if (savedPosition) {
+				positionHistory.update(history => [...history, savedPosition[0] as PosicionConductor]);
+			}
+
+			// Actualizar otros conductores
+			await getOtherDrivers();
+		} catch (err) {
+			console.error('Error en updatePosition:', err);
+			error.set(`Error al actualizar posición: `);
 		}
 	};
 
@@ -213,6 +242,7 @@
 					);
 				},
 				(err) => {
+					console.error('Error en getCurrentPosition:', err);
 					error.set('Error obteniendo ubicación: ' + err.message);
 				},
 				{ enableHighAccuracy: true, timeout: 10000 }
@@ -243,7 +273,7 @@
 					);
 				},
 				(err) => {
-					console.error('Error en seguimiento:', err);
+					console.error('Error en watchPosition:', err);
 					error.set('Error en seguimiento: ' + err.message);
 					stopTracking();
 				},
@@ -254,12 +284,13 @@
 				}
 			);
 			trackingActive.set(true);
+			console.log('Seguimiento GPS activado');
 		} else {
 			error.set('Geolocalización no soportada por este navegador');
 		}
 	};
 
-	// Habilitar seguimiento (llamar desde evento de usuario)
+	// Habilitar seguimiento
 	const enableTracking = () => {
 		userInitiatedTracking = true;
 
@@ -279,6 +310,7 @@
 			watchId = null;
 		}
 		trackingActive.set(false);
+		console.log('Seguimiento GPS detenido');
 	};
 
 	// Obtener otros conductores
@@ -313,6 +345,7 @@
 				driver.conductor_id !== conductorData?.id
 			);
 
+			// Eliminar marcadores de conductores inactivos
 			Object.keys(otherMarkers).forEach(id => {
 				if (!activeDrivers.some(d => d.conductor_id === parseInt(id))) {
 					map.removeLayer(otherMarkers[parseInt(id)]);
@@ -320,6 +353,7 @@
 				}
 			});
 
+			// Actualizar o crear marcadores para conductores activos
 			activeDrivers.forEach(driver => {
 				if (!otherMarkers[driver.conductor_id]) {
 					otherMarkers[driver.conductor_id] = L.marker([driver.lat, driver.lng], {
@@ -363,20 +397,22 @@
 			})));
 
 		} catch (err) {
-			console.error('Error obteniendo otros conductores:', err);
-			error.set('Error al cargar otros conductores');
+			console.error('Error en getOtherDrivers:', err);
+			error.set('Error al cargar otros conductores: ' );
 		}
 	};
 
 	// Obtener sesión actual
 	const getSession = async (): Promise<Session | null> => {
-		const { data, error } = await supabase.auth.getSession();
-		if (error) {
-			console.error('Error obteniendo sesión:', error);
+		try {
+			const { data, error } = await supabase.auth.getSession();
+			if (error) throw error;
+			session.set(data.session);
+			return data.session;
+		} catch (err) {
+			console.error('Error en getSession:', err);
 			return null;
 		}
-		session.set(data.session);
-		return data.session;
 	};
 
 	// Obtener datos del conductor
@@ -401,13 +437,10 @@
 			}
 
 			conductor.set(data);
+			console.log('Conductor obtenido:', data);
 		} catch (err) {
 			console.error('Error en obtenerConductor:', err);
-			if (err instanceof Error) {
-				error.set(err.message);
-			} else {
-				error.set('Error desconocido al obtener conductor');
-			}
+			error.set(err instanceof Error ? err.message : 'Error desconocido al obtener conductor');
 			conductor.set(null);
 		} finally {
 			isLoading.set(false);
@@ -418,6 +451,7 @@
 	const setupSubscriptions = async () => {
 		try {
 			const { data: authData } = supabase.auth.onAuthStateChange(async (event, supabaseSession) => {
+				console.log('Cambio en estado de autenticación:', event);
 				if (supabaseSession) {
 					session.set(supabaseSession);
 				}
@@ -444,6 +478,7 @@
 						table: 'conductor_posiciones'
 					},
 					async (payload) => {
+						console.log('Cambio en conductor_posiciones:', payload);
 						if (
 							payload.new &&
 							'conductor_id' in payload.new &&
@@ -457,7 +492,7 @@
 
 			return { authSubscription: authData.subscription, realtimeSubscription: channel };
 		} catch (error) {
-			console.error('Error configurando suscripciones:', error);
+			console.error('Error en setupSubscriptions:', error);
 			return { authSubscription: null, realtimeSubscription: null };
 		}
 	};
@@ -470,6 +505,7 @@
 
 		const initialize = async () => {
 			try {
+				console.log('Inicializando componente...');
 				await getSession();
 				await new Promise((resolve) => setTimeout(resolve, 50));
 				await obtenerConductor();
@@ -488,17 +524,18 @@
 					try {
 						await getOtherDrivers();
 					} catch (error) {
-						console.error('Error in update interval:', error);
+						console.error('Error en intervalo de actualización:', error);
 					}
 				}, 30000);
 			} catch (error) {
-				console.error('Initialization error:', error);
+				console.error('Error en inicialización:', error);
 			}
 		};
 
 		initialize();
 
 		return () => {
+			console.log('Limpiando componente...');
 			clearInterval(updateInterval);
 			stopTracking();
 
@@ -520,6 +557,7 @@
 	// Limpieza al desmontar el componente
 	onDestroy(() => {
 		if (!browser) return;
+		console.log('Destruyendo componente...');
 		stopTracking();
 		if (map) {
 			map.remove();
@@ -594,12 +632,12 @@
 					🧹 Limpiar ruta
 				</button>
 				<button
-    on:click={() => window.location.reload()}
-    class="map-btn"
-    title="Recargar la página"
->
-    🔄 Recargar para ver estados de conductores
-</button>
+					on:click={() => window.location.reload()}
+					class="map-btn"
+					title="Recargar la página"
+				>
+					🔄 Recargar para ver estados de conductores
+				</button>
 			</div>
 
 			<div bind:this={mapContainer} class="map-view">
@@ -629,7 +667,6 @@
 	</main>
 	<Estado />
 </div>
-
 
 <style>
 	.dashboard-container {
