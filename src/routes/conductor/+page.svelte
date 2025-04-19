@@ -12,6 +12,7 @@
 	  control: string;
 	  marca: string;
 	  email: string;
+	  telefono: string;
 	  acepta_terminos: boolean;
 	  created_at?: string;
 	};
@@ -74,6 +75,7 @@
 		  control: control.toString().trim(),
 		  marca: marca.trim(),
 		  email: email.toLowerCase().trim(),
+		  telefono: telefono.trim(),
 		  acepta_terminos: aceptaTerminos,
 		  created_at: new Date().toISOString()
 		};
