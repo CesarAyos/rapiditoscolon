@@ -2,7 +2,6 @@
 	import { supabase } from '../../components/supabase';
 	import { goto } from '$app/navigation';
 	
-	// Definimos tipos para nuestros datos
 	type ConductorData = {
 	  id?: string;
 	  nombre: string;
@@ -36,7 +35,6 @@
 	}
 	
 	async function handleSubmit() {
-	  // Validaciones
 	  if (!aceptaTerminos) {
 		errorMessage = 'Debes aceptar los términos y condiciones';
 		return;
@@ -51,7 +49,6 @@
 	  errorMessage = '';
 	  
 	  try {
-		// 1. Registrar usuario en auth
 		const { data: authData, error: authError } = await supabase.auth.signUp({
 		  email: email,
 		  password: password,
@@ -66,16 +63,15 @@
 		if (authError) throw authError;
 		if (!authData.user) throw new Error('No se pudo crear el usuario');
   
-		// 2. Insertar datos en tabla conductor
 		const conductorData: ConductorData = {
 		  nombre: nombre.trim(),
 		  placa: placa.trim().toUpperCase(),
 		  licencia: licencia.trim(),
 		  propiedad: propiedad,
-		  control: control.toString().trim(),
+		  control: control.toString().trim(), // Convertimos a string antes de trim
 		  marca: marca.trim(),
 		  email: email.toLowerCase().trim(),
-		  telefono: telefono.trim(),
+		  telefono: telefono.toString().trim(), // Convertimos a string antes de trim
 		  acepta_terminos: aceptaTerminos,
 		  created_at: new Date().toISOString()
 		};
@@ -86,15 +82,12 @@
   
 		if (dbError) throw dbError;
   
-		// 3. Redirigir
 		goto('/auth');
   
 	  } catch (error: unknown) {
-		// Manejo seguro del error
 		if (error instanceof Error) {
 		  errorMessage = error.message;
 		  
-		  // Mensajes específicos para errores conocidos
 		  if (error.message.includes('User already registered')) {
 			errorMessage = 'Este email ya está registrado';
 		  } else if (error.message.includes('password')) {
@@ -109,7 +102,7 @@
 		isLoading = false;
 	  }
 	}
-  </script>
+</script>
   
   <div class="wrapper">
 	<div class="scroll-container">
