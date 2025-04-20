@@ -22,7 +22,7 @@
     onMount(async () => {
       try {
         const { data, error: supabaseError } = await supabase
-          .from('nombre_de_tu_tabla') // Reemplaza con tu nombre de tabla real
+          .from('sugerencias_usuarios') // Reemplaza con tu nombre de tabla real
           .select('*')
           .order('fecha_creacion', { ascending: false });
   
