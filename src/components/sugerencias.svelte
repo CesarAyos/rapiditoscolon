@@ -38,7 +38,7 @@
   </script>
   
   <div class="container">
-    <h1>Datos de la Tabla</h1>
+    <h1>Quejas o sugerencias de los pasajeros</h1>
   
     {#if loading}
       <p>Cargando datos...</p>

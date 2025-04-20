@@ -292,16 +292,11 @@
 
 <button
 	on:click={() => {
-		if (map) {
-			map.remove();
-			map = null;
-		}
-		initMap();
-		getActiveDrivers();
+		window.location.reload();
 	}}
 	class="refresh-btn"
 >
-	🔄 Recargar Mapa
+	🔄 Recargar
 </button>
 
 <div class="map-section">
