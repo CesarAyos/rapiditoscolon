@@ -16,8 +16,8 @@
 		telefono?: string | null;
 	};
 
-	type EstadoPosible = 
-		| 'en_servicio_colon' 
+	type EstadoPosible =
+		| 'en_servicio_colon'
 		| 'en_servicio_ureña'
 		| 'en_ruta_colon_ureña'
 		| 'en_ruta_ureña_colon'
@@ -48,10 +48,10 @@
 	const getSession = async (): Promise<Session | null> => {
 		try {
 			const { data, error: sbError } = await supabase.auth.getSession();
-			
+
 			if (sbError) throw sbError;
 			if (!data.session) return null;
-			
+
 			session.set(data.session);
 			return data.session;
 		} catch (err) {
@@ -65,7 +65,7 @@
 	const obtenerConductor = async (): Promise<boolean> => {
 		isLoading.set(true);
 		error.set('');
-		
+
 		try {
 			if (!currentSession?.user?.email) {
 				throw new Error('No hay usuario autenticado');
@@ -104,7 +104,7 @@
 				.maybeSingle();
 
 			if (sbError) throw sbError;
-			
+
 			if (data?.estado && isValidEstado(data.estado)) {
 				estadoActual.set(data.estado);
 			} else {
@@ -128,37 +128,66 @@
 		].includes(estado);
 	};
 
-	const cambiarEstado = async (nuevoEstado: EstadoPosible, descripcion: string = ''): Promise<void> => {
-    if (!conductorData?.id) {
-        error.set('No hay datos del conductor');
-        return;
-    }
+	const cambiarEstado = async (
+		nuevoEstado: EstadoPosible,
+		descripcion: string = ''
+	): Promise<void> => {
+		if (!conductorData?.id) {
+			error.set('No hay datos del conductor');
+			return;
+		}
 
-    isLoading.set(true);
+		isLoading.set(true);
 
-    try {
-        const { error: dbError } = await supabase
-            .from('estado_conductor')
-            .update({
-                estado: nuevoEstado,
-                descripcion: descripcion || null
-            })
-            .eq('conductor_id', conductorData.id);
+		try {
+			// 1. Buscar el último estado registrado
+			const { data: ultimoEstado, error: queryError } = await supabase
+				.from('estado_conductor')
+				.select('id')
+				.eq('conductor_id', conductorData.id)
+				.order('created_at', { ascending: false })
+				.limit(1)
+				.maybeSingle();
 
-        if (dbError) throw dbError;
+			if (queryError) throw queryError;
 
-        estadoActual.set(nuevoEstado);
-        error.set(`✅ Estado actualizado: ${nuevoEstado}`);
-        setTimeout(() => error.set(''), 3000);
-    } catch (err) {
-        console.error('Error al cambiar estado:', err);
-        error.set(err instanceof Error ? err.message : 'Error al actualizar estado');
-        setTimeout(() => error.set(''), 5000);
-    } finally {
-        isLoading.set(false);
-    }
-};
+			// 2. Decidir si actualizar o insertar
+			if (ultimoEstado?.id) {
+				// Actualizar el último registro existente
+				const { error: updateError } = await supabase
+					.from('estado_conductor')
+					.update({
+						estado: nuevoEstado,
+						descripcion: descripcion || null,
+						updated_at: new Date().toISOString() // Campo opcional para tracking
+					})
+					.eq('id', ultimoEstado.id);
 
+				if (updateError) throw updateError;
+			} else {
+				// Crear un nuevo registro si no existe uno previo
+				const { error: insertError } = await supabase.from('estado_conductor').insert({
+					conductor_id: conductorData.id,
+					estado: nuevoEstado,
+					descripcion: descripcion || null,
+					created_at: new Date().toISOString()
+				});
+
+				if (insertError) throw insertError;
+			}
+
+			// 3. Actualizar el estado en el frontend
+			estadoActual.set(nuevoEstado);
+			error.set(`✅ Estado actualizado: ${nuevoEstado}`);
+			setTimeout(() => error.set(''), 3000);
+		} catch (err) {
+			console.error('Error al cambiar estado:', err);
+			error.set(err instanceof Error ? err.message : 'Error al actualizar estado');
+			setTimeout(() => error.set(''), 5000);
+		} finally {
+			isLoading.set(false);
+		}
+	};
 
 	onMount(() => {
 		let authListener: { subscription: Subscription } | null = null;
@@ -208,9 +237,7 @@
 					<span class="user-badge">Control: {conductorData.control}</span>
 					<span class="user-badge">{conductorData.propiedad}: {conductorData.nombre}</span>
 					<span class="user-badge">Placa: {conductorData.placa}</span>
-					<a
-						href="/auth/dashboard-conductor/maps"
-						class="user-badge">Mapa</a>
+					<a href="/auth/dashboard-conductor/maps" class="user-badge">Mapa</a>
 					<Lock />
 				</div>
 			{:else}
@@ -253,33 +280,33 @@
 				<div class="actions-panel">
 					<h3>Cambiar Estado</h3>
 					<div class="actions-grid">
-						<button 
+						<button
 							type="button"
-							on:click={() => cambiarEstado('en_servicio_colon', 'Ubicación: Colón')} 
+							on:click={() => cambiarEstado('en_servicio_colon', 'Ubicación: Colón')}
 							class="action-btn service"
 						>
 							<span class="icon">🚕</span>
 							<span class="label">En Servicio Colón</span>
 						</button>
-				
-						<button 
+
+						<button
 							type="button"
-							on:click={() => cambiarEstado('en_servicio_ureña', 'Ubicación: Ureña')} 
+							on:click={() => cambiarEstado('en_servicio_ureña', 'Ubicación: Ureña')}
 							class="action-btn service"
 						>
 							<span class="icon">🚕</span>
 							<span class="label">En Servicio Ureña</span>
 						</button>
-				
-						<button 
+
+						<button
 							type="button"
-							on:click={() => cambiarEstado('descanso')} 
+							on:click={() => cambiarEstado('descanso')}
 							class="action-btn rest"
 						>
 							<span class="icon">🛌</span>
 							<span class="label">Descanso</span>
 						</button>
-				
+
 						<button
 							type="button"
 							on:click={() => cambiarEstado('en_ruta_colon_ureña', 'Ruta: Colón → Ureña')}
@@ -288,7 +315,7 @@
 							<span class="icon">🛣️</span>
 							<span class="label">Colón → Ureña</span>
 						</button>
-				
+
 						<button
 							type="button"
 							on:click={() => cambiarEstado('en_ruta_ureña_colon', 'Ruta: Ureña → Colón')}
@@ -297,7 +324,7 @@
 							<span class="icon">🛣️</span>
 							<span class="label">Ureña → Colón</span>
 						</button>
-				
+
 						<button
 							type="button"
 							on:click={() => cambiarEstado('accidentado')}
@@ -325,6 +352,43 @@
 	</main>
 </div>
 
+<!-- 
+BEGIN;
+-- 1. Crear columna temporal
+ALTER TABLE estado_conductor ADD COLUMN estado_temp TEXT;
+
+-- 2. Copiar y transformar datos
+UPDATE estado_conductor 
+SET estado_temp = CASE 
+    WHEN estado = 'En servicio colon' THEN 'servicio colon'
+    WHEN estado = 'En servicio ureña' THEN 'servicio ureña'
+    WHEN estado = 'En ruta' THEN 'en ruta colon ureña'
+    ELSE 'descanso'
+END;
+
+-- 3. Eliminar constraint existente
+ALTER TABLE estado_conductor DROP CONSTRAINT estado_conductor_estado_check;
+
+-- 4. Actualizar columna original
+UPDATE estado_conductor SET estado = estado_temp;
+
+-- 5. Añadir nueva constraint
+ALTER TABLE estado_conductor 
+ADD CONSTRAINT estado_conductor_estado_check 
+CHECK (estado IN (
+    'descanso',
+    'servicio colon',
+    'servicio ureña',
+    'en ruta colon ureña',
+    'en ruta ureña colon',
+    'accidentado'
+));
+
+-- 6. Eliminar columna temporal
+ALTER TABLE estado_conductor DROP COLUMN estado_temp;
+COMMIT;
+
+para modificar los estados -->
 
 <style>
 	/* Estilos base */
@@ -629,41 +693,3 @@
 		}
 	}
 </style>
-
-<!-- 
-BEGIN;
--- 1. Crear columna temporal
-ALTER TABLE estado_conductor ADD COLUMN estado_temp TEXT;
-
--- 2. Copiar y transformar datos
-UPDATE estado_conductor 
-SET estado_temp = CASE 
-    WHEN estado = 'En servicio colon' THEN 'servicio colon'
-    WHEN estado = 'En servicio ureña' THEN 'servicio ureña'
-    WHEN estado = 'En ruta' THEN 'en ruta colon ureña'
-    ELSE 'descanso'
-END;
-
--- 3. Eliminar constraint existente
-ALTER TABLE estado_conductor DROP CONSTRAINT estado_conductor_estado_check;
-
--- 4. Actualizar columna original
-UPDATE estado_conductor SET estado = estado_temp;
-
--- 5. Añadir nueva constraint
-ALTER TABLE estado_conductor 
-ADD CONSTRAINT estado_conductor_estado_check 
-CHECK (estado IN (
-    'descanso',
-    'servicio colon',
-    'servicio ureña',
-    'en ruta colon ureña',
-    'en ruta ureña colon',
-    'accidentado'
-));
-
--- 6. Eliminar columna temporal
-ALTER TABLE estado_conductor DROP COLUMN estado_temp;
-COMMIT;
-
-para modificar los estados -->
