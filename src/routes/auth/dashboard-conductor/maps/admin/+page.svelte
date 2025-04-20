@@ -5,6 +5,8 @@
 	import { supabase } from '../../../../../components/supabase';
 	import type * as Leaflet from 'leaflet';
 	import Estado from '../../../../../components/estado.svelte';
+	import Sugerencias from '../../../../../components/sugerencias.svelte';
+	
 
 	interface ConductorFromDB {
 		id: number;
@@ -323,6 +325,10 @@
 	<Estado />
 </div>
 
+<div class="mb-5">
+	<Sugerencias/>
+</div>
+
 <style>
 	.map-view {
 		width: 100% !important;
@@ -353,13 +359,7 @@
 		background: #f0f0f0;
 	}
 
-	.dashboard-container {
-		display: flex;
-		flex-direction: column;
-		min-height: 100vh;
-		width: 100%;
-		overflow: auto;
-	}
+	
 
 	.map-section {
 		position: relative;
