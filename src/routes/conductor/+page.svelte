@@ -4,6 +4,7 @@
 	
 	type ConductorData = {
 	  id?: string;
+	  user_id: string;  // Columna UUID para vincular al usuario de Auth
 	  nombre: string;
 	  placa: string;
 	  licencia: string;
@@ -35,6 +36,7 @@
 	}
 	
 	async function handleSubmit() {
+	  // Validaciones
 	  if (!aceptaTerminos) {
 		errorMessage = 'Debes aceptar los términos y condiciones';
 		return;
@@ -49,6 +51,7 @@
 	  errorMessage = '';
 	  
 	  try {
+		// 1. Registrar usuario en Auth
 		const { data: authData, error: authError } = await supabase.auth.signUp({
 		  email: email,
 		  password: password,
@@ -63,15 +66,17 @@
 		if (authError) throw authError;
 		if (!authData.user) throw new Error('No se pudo crear el usuario');
   
+		// 2. Insertar datos en la tabla 'conductor' con el user_id
 		const conductorData: ConductorData = {
+		  user_id: authData.user.id,  // Asigna el UUID del usuario recién creado
 		  nombre: nombre.trim(),
 		  placa: placa.trim().toUpperCase(),
 		  licencia: licencia.trim(),
 		  propiedad: propiedad,
-		  control: control.toString().trim(), // Convertimos a string antes de trim
+		  control: control.toString().trim(),  // Convierte a string antes de trim
 		  marca: marca.trim(),
 		  email: email.toLowerCase().trim(),
-		  telefono: telefono.toString().trim(), // Convertimos a string antes de trim
+		  telefono: telefono.toString().trim(),  // Convierte a string antes de trim
 		  acepta_terminos: aceptaTerminos,
 		  created_at: new Date().toISOString()
 		};
@@ -82,9 +87,11 @@
   
 		if (dbError) throw dbError;
   
+		// 3. Redirigir
 		goto('/auth');
   
 	  } catch (error: unknown) {
+		// Manejo seguro del error
 		if (error instanceof Error) {
 		  errorMessage = error.message;
 		  
@@ -102,7 +109,7 @@
 		isLoading = false;
 	  }
 	}
-</script>
+  </script>
   
   <div class="wrapper">
 	<div class="scroll-container">
