@@ -7,6 +7,7 @@
 	import Estado from '../../../../../components/estado.svelte';
 	import Sugerencias from '../../../../../components/sugerencias.svelte';
 	import Turnos from '../../../../../components/turnos.svelte';
+	import Carreras from "../../../../../components/carreras.svelte";
 	
 
 	interface ConductorFromDB {
@@ -320,6 +321,10 @@
 	  <!-- Shifts Section -->
 	  <section class="shifts-section">
 		<Turnos />
+	  </section>
+
+	  <section class="shifts-section">
+		<Carreras />
 	  </section>
   
 	  <!-- Suggestions Section -->
