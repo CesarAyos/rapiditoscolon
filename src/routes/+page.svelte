@@ -9,10 +9,6 @@
           <span class="btn-icon">🚗</span>
           <span>Soy conductor</span>
         </a>
-        <!-- <a href="/auth" class="btn btn-passenger">
-          <span class="btn-icon">👤</span>
-          <span>Soy Pasajero</span>
-        </a> -->
       </div>
       
       <div class="floating-elements">

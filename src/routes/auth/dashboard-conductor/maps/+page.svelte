@@ -6,6 +6,9 @@
 	import Lock from '../../../../components/lock.svelte';
 	import type { Session } from '@supabase/supabase-js';
 	import Estado from '../../../../components/estado.svelte';
+	import Turnosasignados from '../../../../components/turnosasignados.svelte';
+	
+	
 
 	type Conductor = {
 		id: number;
@@ -666,6 +669,7 @@
 		</div>
 	</main>
 	<Estado />
+	<Turnosasignados />
 </div>
 
 <style>
