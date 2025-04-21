@@ -86,6 +86,11 @@
 		}
 	}
 
+	function abrirGoogleMaps(direccion: string) {
+		const url = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(direccion)}`;
+		window.open(url, '_blank');
+	}
+
 	onMount(async () => {
 		await protegerRuta();
 		await cargarSolicitudes();
@@ -205,7 +210,22 @@
 													{/if}
 												</div>
 											</div>
-											
+											<div class="d-flex flex-column gap-2 ms-3">
+												<button
+													class="btn btn-sm btn-outline-primary"
+													on:click={() => abrirGoogleMaps(solicitud.direccion_recogida)}
+													title="Abrir en Google Maps"
+												>
+													<i class="bi bi-map">Google</i>
+												</button>
+												<button
+													class="btn btn-sm btn-outline-success"
+													on:click={() => marcarComoCompletada(solicitud.id)}
+													title="Marcar como completada"
+												>
+													<i class="bi bi-check-circle">Estado</i>
+												</button>
+											</div>
 										</div>
 									</div>
 								{/each}
@@ -261,7 +281,5 @@
 			flex-direction: column;
 			gap: 1rem;
 		}
-
-		
 	}
 </style>
