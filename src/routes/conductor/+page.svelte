@@ -4,7 +4,7 @@
 	
 	type ConductorData = {
 	  id?: string;
-	  user_id: string;  // Columna UUID para vincular al usuario de Auth
+	  user_id: string;
 	  nombre: string;
 	  placa: string;
 	  licencia: string;
@@ -36,7 +36,7 @@
 	}
 	
 	async function handleSubmit() {
-	  // Validaciones
+	  // Validaciones iniciales
 	  if (!aceptaTerminos) {
 		errorMessage = 'Debes aceptar los términos y condiciones';
 		return;
@@ -51,43 +51,38 @@
 	  errorMessage = '';
 	  
 	  try {
-		// 1. Registrar usuario en Auth
-		const { data: authData, error: authError } = await supabase.auth.signUp({
-		  email: email,
-		  password: password,
-		  options: {
-			data: {
-			  name: nombre,
-			  role: 'conductor'
-			}
-		  }
-		});
-  
-		if (authError) throw authError;
-		if (!authData.user) throw new Error('No se pudo crear el usuario');
-  
-		// 2. Insertar datos en la tabla 'conductor' con el user_id
-		const conductorData: ConductorData = {
-		  user_id: authData.user.id,  // Asigna el UUID del usuario recién creado
-		  nombre: nombre.trim(),
-		  placa: placa.trim().toUpperCase(),
-		  licencia: licencia.trim(),
-		  propiedad: propiedad,
-		  control: control.toString().trim(),  // Convierte a string antes de trim
-		  marca: marca.trim(),
-		  email: email.toLowerCase().trim(),
-		  telefono: telefono.toString().trim(),  // Convierte a string antes de trim
-		  acepta_terminos: aceptaTerminos,
-		  created_at: new Date().toISOString()
-		};
-  
-		const { error: dbError } = await supabase
+		// 1. Primero verificar si el email ya existe
+		const { data: existingUser, error: emailError } = await supabase
 		  .from('conductor')
-		  .insert(conductorData);
-  
-		if (dbError) throw dbError;
-  
-		// 3. Redirigir
+		  .select('email')
+		  .eq('email', email.toLowerCase().trim())
+		  .single();
+
+		if (existingUser) {
+		  throw new Error('Este email ya está registrado');
+		}
+
+		// 2. Crear el usuario en Auth dentro de una transacción
+		let authData;
+		let authError;
+
+		// Usamos una transacción para asegurar atomicidad
+		const { data: transactionData, error: transactionError } = await supabase.rpc('create_conductor', {
+		  p_email: email,
+		  p_password: password,
+		  p_nombre: nombre.trim(),
+		  p_placa: placa.trim().toUpperCase(),
+		  p_licencia: licencia.trim(),
+		  p_propiedad: propiedad,
+		  p_control: control.toString().trim(),
+		  p_marca: marca.trim(),
+		  p_telefono: telefono.toString().trim(),
+		  p_acepta_terminos: aceptaTerminos
+		});
+
+		if (transactionError) throw transactionError;
+
+		// 3. Si todo salió bien, redirigir
 		goto('/auth');
   
 	  } catch (error: unknown) {
@@ -95,7 +90,7 @@
 		if (error instanceof Error) {
 		  errorMessage = error.message;
 		  
-		  if (error.message.includes('User already registered')) {
+		  if (error.message.includes('User already registered') || error.message.includes('email ya está registrado')) {
 			errorMessage = 'Este email ya está registrado';
 		  } else if (error.message.includes('password')) {
 			errorMessage = 'La contraseña no cumple los requisitos';
@@ -109,8 +104,8 @@
 		isLoading = false;
 	  }
 	}
-  </script>
-  
+</script>
+
   <div class="wrapper">
 	<div class="scroll-container">
 	  <div class="container animate-fall">
