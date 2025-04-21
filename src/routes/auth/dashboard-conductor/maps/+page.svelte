@@ -7,8 +7,6 @@
 	import type { Session } from '@supabase/supabase-js';
 	import Estado from '../../../../components/estado.svelte';
 	import Turnosasignados from '../../../../components/turnosasignados.svelte';
-	
-	
 
 	type Conductor = {
 		id: number;
@@ -120,7 +118,7 @@
 			return data;
 		} catch (err) {
 			console.error('Error en savePosition:', err);
-			
+
 			// Intento alternativo con insert directo
 			try {
 				console.log('Intentando insert directo como fallback');
@@ -130,7 +128,7 @@
 					.select();
 
 				if (insertError) throw insertError;
-				
+
 				console.log('Posición insertada exitosamente (fallback):', data);
 				return data;
 			} catch (fallbackErr) {
@@ -151,13 +149,13 @@
 		try {
 			// Agregar la nueva posición al historial
 			positions.push([lat, lng]);
-			
+
 			// Crear o actualizar la polilínea
 			if (isTracking) {
 				if (polyline) {
 					map.removeLayer(polyline);
 				}
-				
+
 				polyline = L.polyline(positions, {
 					color: '#3388ff',
 					weight: 5,
@@ -220,7 +218,7 @@
 			// Guardar posición en la base de datos
 			const savedPosition = await savePosition(lat, lng, accuracy);
 			if (savedPosition) {
-				positionHistory.update(history => [...history, savedPosition[0] as PosicionConductor]);
+				positionHistory.update((history) => [...history, savedPosition[0] as PosicionConductor]);
 			}
 
 			// Actualizar otros conductores
@@ -299,21 +297,40 @@
 
 		if (isTracking) {
 			stopTracking();
+			saveTrackingState(false);
 		} else {
 			startTracking();
+			saveTrackingState(true);
 		}
 	};
 
 	// Detener seguimiento
 	const stopTracking = () => {
-		if (!browser) return;
+  if (!browser) return;
 
-		if (watchId !== null) {
-			navigator.geolocation.clearWatch(watchId);
-			watchId = null;
+  if (watchId !== null) {
+    navigator.geolocation.clearWatch(watchId);
+    watchId = null;
+  }
+  trackingActive.set(false);
+  saveTrackingState(false); // Añade esta línea
+  console.log('Seguimiento GPS detenido');
+};
+
+	// Guardar estado en localStorage
+	const saveTrackingState = (isActive: boolean) => {
+		if (browser) {
+			localStorage.setItem('trackingActive', JSON.stringify(isActive));
 		}
-		trackingActive.set(false);
-		console.log('Seguimiento GPS detenido');
+	};
+
+	// Leer estado desde localStorage
+	const loadTrackingState = (): boolean => {
+		if (browser) {
+			const saved = localStorage.getItem('trackingActive');
+			return saved ? JSON.parse(saved) : false;
+		}
+		return false;
 	};
 
 	// Obtener otros conductores
@@ -323,14 +340,16 @@
 		try {
 			const { data, error: sbError } = await supabase
 				.from('conductor_posiciones')
-				.select(`
+				.select(
+					`
 					conductor_id,
 					lat,
 					lng,
 					accuracy,
 					timestamp,
 					conductor!fk_conductor(id, nombre, placa, control, propiedad, telefono)
-				`)
+				`
+				)
 				.order('timestamp', { ascending: false })
 				.limit(50);
 
@@ -338,26 +357,26 @@
 			if (!data) return;
 
 			const uniqueDrivers = data.reduce((acc: any[], current) => {
-				if (!acc.some(item => item.conductor_id === current.conductor_id)) {
+				if (!acc.some((item) => item.conductor_id === current.conductor_id)) {
 					acc.push(current);
 				}
 				return acc;
 			}, []);
 
-			const activeDrivers = uniqueDrivers.filter(driver => 
-				driver.conductor_id !== conductorData?.id
+			const activeDrivers = uniqueDrivers.filter(
+				(driver) => driver.conductor_id !== conductorData?.id
 			);
 
 			// Eliminar marcadores de conductores inactivos
-			Object.keys(otherMarkers).forEach(id => {
-				if (!activeDrivers.some(d => d.conductor_id === parseInt(id))) {
+			Object.keys(otherMarkers).forEach((id) => {
+				if (!activeDrivers.some((d) => d.conductor_id === parseInt(id))) {
 					map.removeLayer(otherMarkers[parseInt(id)]);
 					delete otherMarkers[parseInt(id)];
 				}
 			});
 
 			// Actualizar o crear marcadores para conductores activos
-			activeDrivers.forEach(driver => {
+			activeDrivers.forEach((driver) => {
 				if (!otherMarkers[driver.conductor_id]) {
 					otherMarkers[driver.conductor_id] = L.marker([driver.lat, driver.lng], {
 						icon: L.divIcon({
@@ -395,13 +414,14 @@
 				}
 			});
 
-			otherDrivers.set(activeDrivers.map(d => ({
-				...d.conductor
-			})));
-
+			otherDrivers.set(
+				activeDrivers.map((d) => ({
+					...d.conductor
+				}))
+			);
 		} catch (err) {
 			console.error('Error en getOtherDrivers:', err);
-			error.set('Error al cargar otros conductores: ' );
+			error.set('Error al cargar otros conductores: ');
 		}
 	};
 
@@ -514,6 +534,13 @@
 				await obtenerConductor();
 				await initMap();
 
+				// Cargar estado del seguimiento
+				const savedTrackingState = loadTrackingState();
+				if (savedTrackingState) {
+					userInitiatedTracking = true;
+					startTracking();
+				}
+
 				const subscriptions = await setupSubscriptions();
 				authSubscription = subscriptions.authSubscription;
 				realtimeSubscription = subscriptions.realtimeSubscription;
@@ -595,7 +622,7 @@
 			{/if}
 		</div>
 	</nav>
-	
+
 	<main class="dashboard-content">
 		<div class="content-wrapper">
 			<div class="map-controls">
