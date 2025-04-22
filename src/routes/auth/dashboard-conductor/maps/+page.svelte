@@ -7,8 +7,6 @@
 	import type { Session } from '@supabase/supabase-js';
 	import Estado from '../../../../components/estado.svelte';
 	import Turnosasignados from '../../../../components/turnosasignados.svelte';
-	import Pasajeromanual from '../../../../components/pasajeromanual.svelte';
-	import Carreras from '../../../../components/carreras.svelte';
 	
 
 	type Conductor = {
@@ -618,6 +616,7 @@
 					<span class="user-badge">Placa: {conductorData.placa}</span>
 					<a href="/auth/dashboard-conductor/maps" class="user-badge">Mapa</a>
 					<a href="/auth/dashboard-conductor/maps/admin" class="user-badge">Admin</a>
+					<a href="/pasajeros" class="user-badge">Pasajeros</a>
 					<Lock />
 				</div>
 			{:else}
@@ -700,8 +699,6 @@
 	</main>
 	<Estado />
 	<Turnosasignados />
-	<Carreras />
-	<Pasajeromanual />
 
 	
 </div>
