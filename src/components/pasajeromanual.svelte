@@ -15,6 +15,8 @@
 		control_reporto: string | null;
 		estado: EstadoPasajero;
 		created_at: string;
+		confirmado_por?: string | null;
+		buscado_por?: string | null;
 	}
 
 	interface FormPasajero {
@@ -22,7 +24,7 @@
 		apellido: string;
 		telefono: string;
 		direccion: string;
-		hora_busqueda: string; // Ahora espera formato HH:MM
+		hora_busqueda: string;
 		control_reporto: string;
 		estado: EstadoPasajero;
 	}
@@ -31,6 +33,7 @@
 	let showModal: boolean = false;
 	let loading: boolean = false;
 	let message: string = '';
+	let controlUsuarioActual: string | null = null;
 
 	// Formulario
 	let form: FormPasajero = {
@@ -38,7 +41,7 @@
 		apellido: '',
 		telefono: '',
 		direccion: '',
-		hora_busqueda: '', // Formato HH:MM
+		hora_busqueda: '',
 		control_reporto: '',
 		estado: 'pendiente'
 	};
@@ -48,18 +51,49 @@
 	let pasajerosFiltrados: Pasajero[] = [];
 	let filtroEstado: EstadoPasajero = 'pendiente';
 
-	// Cargar pasajeros al montar el componente
+	// Cargar pasajeros y datos del usuario al montar el componente
 	onMount(async () => {
+		await obtenerControlUsuario();
 		await cargarPasajeros();
 	});
+
+	// Función para obtener el control del usuario actual
+	async function obtenerControlUsuario(): Promise<void> {
+		loading = true;
+		try {
+			// Obtener el usuario autenticado
+			const { data: { user } } = await supabase.auth.getUser();
+			
+			if (user) {
+				// Buscar el conductor asociado a este usuario
+				const { data: conductorData, error } = await supabase
+					.from('conductor')
+					.select('control')
+					.eq('user_id', user.id)
+					.single();
+				
+				if (conductorData) {
+					controlUsuarioActual = conductorData.control;
+				} else if (error) {
+					console.error('Error al cargar datos del conductor:', error);
+					message = 'No se pudo obtener su información de conductor';
+				}
+			} else {
+				message = 'No hay usuario autenticado';
+			}
+		} catch (error) {
+			console.error('Error al obtener usuario:', error);
+			message = 'Error al cargar información del usuario';
+		}
+		loading = false;
+	}
 
 	// Función para cargar pasajeros
 	async function cargarPasajeros(): Promise<void> {
 		loading = true;
 		const { data, error } = await supabase
 			.from('pasajeros')
-			.select('*')
-			
+			.select('*');
 
 		if (error) {
 			message = `Error cargando pasajeros: ${error.message}`;
@@ -77,18 +111,17 @@
 	}
 
 	function convertirHoraManual(hora: string): string {
-  if (!hora) return '';
-  
-  // Asegurar formato HH:MM (agrega 0 delante si es H:MM)
-  const [horasStr, minutos] = hora.split(':');
-  const horas = horasStr.padStart(2, '0');
-  const horaNormalizada = `${horas}:${minutos}`;
+		if (!hora) return '';
+		
+		const [horasStr, minutos] = hora.split(':');
+		const horas = horasStr.padStart(2, '0');
+		const horaNormalizada = `${horas}:${minutos}`;
 
-  const fecha = new Date();
-  fecha.setHours(parseInt(horas), parseInt(minutos), 0, 0);
-  
-  return fecha.toISOString();
-}
+		const fecha = new Date();
+		fecha.setHours(parseInt(horas), parseInt(minutos), 0, 0);
+		
+		return fecha.toISOString();
+	}
 
 	// Guardar nuevo pasajero
 	async function guardarPasajero(): Promise<void> {
@@ -97,7 +130,6 @@
 			return;
 		}
 
-		// Validar formato de hora (HH:MM)
 		if (!/^([0-9]|0[0-9]|1[0-9]|2[0-3]):[0-5][0-9]$/.test(form.hora_busqueda)) {
 			message = 'Formato de hora inválido. Use H:MM o HH:MM (ej: 8:30 o 14:30)';
 			return;
@@ -105,7 +137,6 @@
 
 		loading = true;
 
-		// Convertir hora manual a timestamp completo
 		const horaCompleta = convertirHoraManual(form.hora_busqueda);
 
 		const { error } = await supabase.from('pasajeros').insert([
@@ -140,13 +171,28 @@
 	// Cambiar estado del pasajero
 	async function cambiarEstado(pasajero: Pasajero): Promise<void> {
 		if (pasajero.estado === 'buscado') return;
+		if (!controlUsuarioActual) {
+			message = 'No se pudo identificar su control de conductor';
+			return;
+		}
 
 		loading = true;
 		const nuevoEstado: EstadoPasajero = pasajero.estado === 'pendiente' ? 'confirmado' : 'buscado';
 
+		const updateData: any = { 
+			estado: nuevoEstado 
+		};
+
+		// Agregar quién realizó la acción
+		if (nuevoEstado === 'confirmado') {
+			updateData.confirmado_por = controlUsuarioActual;
+		} else if (nuevoEstado === 'buscado') {
+			updateData.buscado_por = controlUsuarioActual;
+		}
+
 		const { error } = await supabase
 			.from('pasajeros')
-			.update({ estado: nuevoEstado })
+			.update(updateData)
 			.eq('id', pasajero.id);
 
 		if (error) {
@@ -158,23 +204,19 @@
 		loading = false;
 	}
 
-	// Función de ordenación segura por fecha
-  function ordenarPorFecha(a: Pasajero, b: Pasajero): number {
+	// Resto de funciones sin cambios...
+	function ordenarPorFecha(a: Pasajero, b: Pasajero): number {
 		try {
-			// Usamos directamente las fechas ISO almacenadas
 			const fechaA = new Date(a.hora_busqueda).getTime();
 			const fechaB = new Date(b.hora_busqueda).getTime();
-			
-			// Orden ASCENDENTE (más temprano primero)
 			return fechaA - fechaB;
-			
 		} catch (error) {
 			console.error("Error al ordenar por fecha:", error);
 			return 0;
 		}
 	}
 
-  function agruparPorDia(pasajeros: Pasajero[]): Record<string, Pasajero[]> {
+	function agruparPorDia(pasajeros: Pasajero[]): Record<string, Pasajero[]> {
 		return pasajeros.reduce((acc: Record<string, Pasajero[]>, pasajero) => {
 			const fecha = new Date(pasajero.hora_busqueda);
 			const dia = fecha.toLocaleDateString('es-ES', {
@@ -189,29 +231,23 @@
 		}, {});
 	}
 
-	// Formatear fecha para mostrar solo la hora
 	function formatHora(fechaISO: string): string {
-  try {
-    const fecha = new Date(fechaISO);
-    if (isNaN(fecha.getTime())) return '-';
-    
-    // Mostrar exactamente como se ingresó (H:MM o HH:MM)
-    const horas = fecha.getHours();
-    const minutos = fecha.getMinutes().toString().padStart(2, '0');
-    
-    return `${horas}:${minutos}`;
-  } catch {
-    return '-';
-  }
-}
+		try {
+			const fecha = new Date(fechaISO);
+			if (isNaN(fecha.getTime())) return '-';
+			const horas = fecha.getHours();
+			const minutos = fecha.getMinutes().toString().padStart(2, '0');
+			return `${horas}:${minutos}`;
+		} catch {
+			return '-';
+		}
+	}
 
-	// Cambiar filtro
 	function cambiarFiltro(nuevoFiltro: EstadoPasajero): void {
 		filtroEstado = nuevoFiltro;
 		filtrarPasajeros();
 	}
 
-	// Manejar tecla en fila de tabla (para accesibilidad)
 	function handleKeyDown(event: KeyboardEvent, pasajero: Pasajero): void {
 		if (event.key === 'Enter' || event.key === ' ') {
 			event.preventDefault();
@@ -220,8 +256,8 @@
 	}
 </script>
 
+<!-- Resto del template (igual que antes) -->
 <div class="container">
-	<!-- Notificaciones -->
 	{#if message}
 		<div class="notification {message.includes('Error') ? 'error' : 'success'}">
 			{message}
@@ -231,12 +267,10 @@
 		</div>
 	{/if}
 
-	<!-- Botón principal -->
 	<button on:click={() => (showModal = true)} class="btn" disabled={loading}>
 		{loading ? 'Cargando...' : 'Pasajero de forma manual'}
 	</button>
 
-	<!-- Filtros de estado -->
 	<div class="filtros">
 		<button
 			class:active={filtroEstado === 'pendiente'}
@@ -261,7 +295,6 @@
 		</button>
 	</div>
 
-	<!-- Modal del formulario -->
 	{#if showModal}
 		<div class="modal">
 			<div class="modal-content">
@@ -317,78 +350,84 @@
 	{/if}
 
 	<div class="pasajeros-list">
-    <h2>
-      Pasajeros {filtroEstado === 'pendiente'
-        ? 'Pendientes'
-        : filtroEstado === 'confirmado'
-          ? 'Confirmados'
-          : 'Buscados'}
-    </h2>
-  
-    {#if loading && pasajerosFiltrados.length === 0}
-      <p class="mensaje-vacio">Cargando pasajeros...</p>
-    {:else if pasajerosFiltrados.length === 0}
-      <p class="mensaje-vacio">
-        {filtroEstado === 'pendiente'
-          ? 'No hay pasajeros pendientes'
-          : filtroEstado === 'confirmado'
-            ? 'No hay pasajeros confirmados'
-            : 'No hay pasajeros buscados'}
-      </p>
-    {:else}
-      {#each Object.entries(agruparPorDia(pasajerosFiltrados)) as [dia, grupo]}
-        <div class="grupo-dia">
-          <h3>{dia}</h3>
-  
-          <table>
-            <thead>
-              <tr>
-                <th>Nombre</th>
-                <th>Apellido</th>
-                <th>Teléfono</th>
-                <th>Dirección</th>
-                <th>Hora Búsqueda</th>
-                <th>Control</th>
-                <th>Estado</th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each grupo.sort(ordenarPorFecha) as pasajero}
-                <tr
-                  on:click={() => cambiarEstado(pasajero)}
-                  on:keydown={(e) => handleKeyDown(e, pasajero)}
-                  class:clickable={pasajero.estado !== 'buscado'}
-                  class:buscado={pasajero.estado === 'buscado'}
-                  tabindex={pasajero.estado !== 'buscado' ? 0 : undefined}
-                  role={pasajero.estado !== 'buscado' ? 'button' : undefined}
-                  aria-label={`Pasajero ${pasajero.nombre} ${pasajero.apellido}, estado ${pasajero.estado}`}
-                >
-                  <td>{pasajero.nombre}</td>
-                  <td>{pasajero.apellido}</td>
-                  <td>{pasajero.telefono}</td>
-                  <td>{pasajero.direccion || '-'}</td>
-                  <td>
-                    {formatHora(pasajero.hora_busqueda)}
-                  </td>
-                  <td>{pasajero.control_reporto || '-'}</td>
-                  <td
-                    class:estado-pendiente={pasajero.estado === 'pendiente'}
-                    class:estado-confirmado={pasajero.estado === 'confirmado'}
-                    class:estado-buscado={pasajero.estado === 'buscado'}
-                  >
-                    {pasajero.estado.toUpperCase()}
-                  </td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-      {/each}
-    {/if}
-  </div>
+		<h2>
+			Pasajeros {filtroEstado === 'pendiente'
+				? 'Pendientes'
+				: filtroEstado === 'confirmado'
+					? 'Confirmados'
+					: 'Buscados'}
+		</h2>
+	
+		{#if loading && pasajerosFiltrados.length === 0}
+			<p class="mensaje-vacio">Cargando pasajeros...</p>
+		{:else if pasajerosFiltrados.length === 0}
+			<p class="mensaje-vacio">
+				{filtroEstado === 'pendiente'
+					? 'No hay pasajeros pendientes'
+					: filtroEstado === 'confirmado'
+						? 'No hay pasajeros confirmados'
+						: 'No hay pasajeros buscados'}
+			</p>
+		{:else}
+			{#each Object.entries(agruparPorDia(pasajerosFiltrados)) as [dia, grupo]}
+				<div class="grupo-dia">
+					<h3>{dia}</h3>
+		
+					<table>
+						<thead>
+							<tr>
+								<th>Nombre</th>
+								<th>Apellido</th>
+								<th>Teléfono</th>
+								<th>Dirección</th>
+								<th>Hora Búsqueda</th>
+								<th>Reportado por</th>
+								<th>Estado</th>
+								<th>Buscado por</th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each grupo.sort(ordenarPorFecha) as pasajero}
+								<tr
+									on:click={() => cambiarEstado(pasajero)}
+									on:keydown={(e) => handleKeyDown(e, pasajero)}
+									class:clickable={pasajero.estado !== 'buscado'}
+									class:buscado={pasajero.estado === 'buscado'}
+									tabindex={pasajero.estado !== 'buscado' ? 0 : undefined}
+									role={pasajero.estado !== 'buscado' ? 'button' : undefined}
+								>
+									<td>{pasajero.nombre}</td>
+									<td>{pasajero.apellido}</td>
+									<td>{pasajero.telefono}</td>
+									<td>{pasajero.direccion || '-'}</td>
+									<td>{formatHora(pasajero.hora_busqueda)}</td>
+									<td>{pasajero.control_reporto || '-'}</td>
+									<td class:estado-pendiente={pasajero.estado === 'pendiente'}
+										class:estado-confirmado={pasajero.estado === 'confirmado'}
+										class:estado-buscado={pasajero.estado === 'buscado'}>
+										{pasajero.estado.toUpperCase()}
+									</td>
+									<td>
+										{#if pasajero.estado === 'confirmado' && pasajero.confirmado_por}
+											Control: {pasajero.confirmado_por}
+										{:else if pasajero.estado === 'buscado' && pasajero.buscado_por}
+											Control: {pasajero.buscado_por}
+										{:else}
+											-
+										{/if}
+									</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
+			{/each}
+		{/if}
+	</div>
 </div>
 
 <style>
+	/* Estilos anteriores se mantienen igual */
 	:global(body) {
 		font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
 		margin: 0;
@@ -642,6 +681,15 @@
 		font-style: italic;
 		background-color: #f9f9f9;
 		border-radius: 4px;
+	}
+
+	/* Estilo para la nueva columna */
+	table th:nth-child(8),
+	table td:nth-child(8) {
+		max-width: 150px;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
 
 	@media (max-width: 768px) {
