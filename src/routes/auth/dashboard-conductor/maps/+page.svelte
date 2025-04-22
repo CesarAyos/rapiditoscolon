@@ -7,6 +7,9 @@
 	import type { Session } from '@supabase/supabase-js';
 	import Estado from '../../../../components/estado.svelte';
 	import Turnosasignados from '../../../../components/turnosasignados.svelte';
+	import Pasajeromanual from '../../../../components/pasajeromanual.svelte';
+	import Carreras from '../../../../components/carreras.svelte';
+	
 
 	type Conductor = {
 		id: number;
@@ -697,6 +700,10 @@
 	</main>
 	<Estado />
 	<Turnosasignados />
+	<Carreras />
+	<Pasajeromanual />
+
+	
 </div>
 
 <style>
