@@ -1,179 +1,208 @@
 <script lang="ts">
-    import { supabase } from '../components/supabase.js';
-    import { onMount } from 'svelte';
+  import { supabase } from '../components/supabase.js';
+  import { onMount } from 'svelte';
+
+  // Definición de tipos
+  type EstadoPasajero = 'pendiente' | 'confirmado' | 'buscado';
   
-    // Definición de tipos
-    type EstadoPasajero = 'pendiente' | 'confirmado' | 'buscado';
-    
-    interface Pasajero {
-      id: string;
-      nombre: string;
-      apellido: string;
-      telefono: string;
-      direccion: string | null;
-      hora_busqueda: string;
-      control_reporto: string | null;
-      estado: EstadoPasajero;
-      created_at: string;
-    }
-  
-    interface FormPasajero {
-      nombre: string;
-      apellido: string;
-      telefono: string;
-      direccion: string;
-      hora_busqueda: string;
-      control_reporto: string;
-      estado: EstadoPasajero;
-    }
-  
-    // Estados del componente
-    let showModal: boolean = false;
-    let loading: boolean = false;
-    let message: string = '';
-  
-    // Formulario
-    let form: FormPasajero = {
-      nombre: '',
-      apellido: '',
-      telefono: '',
-      direccion: '',
-      hora_busqueda: '',
-      control_reporto: '',
-      estado: 'pendiente'
-    };
-  
-    // Listas de pasajeros
-    let pasajeros: Pasajero[] = [];
-    let pasajerosFiltrados: Pasajero[] = [];
-    let filtroEstado: EstadoPasajero = 'pendiente';
-  
-    // Cargar pasajeros al montar el componente
-    onMount(async () => {
-      await cargarPasajeros();
-    });
-  
-    // Función para cargar pasajeros
-    async function cargarPasajeros(): Promise<void> {
-      loading = true;
-      const { data, error } = await supabase
-        .from('pasajeros')
-        .select('*')
-        .order('hora_busqueda', { ascending: false });
-  
-      if (error) {
-        message = `Error cargando pasajeros: ${error.message}`;
-        console.error(message);
-      } else if (data) {
-        pasajeros = data;
-        filtrarPasajeros();
-      }
-      loading = false;
-    }
-  
-    // Filtrar pasajeros según estado
-    function filtrarPasajeros(): void {
-      pasajerosFiltrados = pasajeros.filter(p => p.estado === filtroEstado);
-    }
-  
-    // Guardar nuevo pasajero
-    async function guardarPasajero(): Promise<void> {
-      if (!form.nombre || !form.apellido || !form.telefono || !form.hora_busqueda) {
-        message = 'Por favor complete todos los campos requeridos';
-        return;
-      }
-  
-      loading = true;
-      const { error } = await supabase
-        .from('pasajeros')
-        .insert([{
-          ...form,
-          direccion: form.direccion || null,
-          control_reporto: form.control_reporto || null
-        }]);
-  
-      if (error) {
-        message = `Error guardando pasajero: ${error.message}`;
-        console.error(message);
-      } else {
-        message = 'Pasajero registrado exitosamente';
-        form = {
-          nombre: '',
-          apellido: '',
-          telefono: '',
-          direccion: '',
-          hora_busqueda: '',
-          control_reporto: '',
-          estado: 'pendiente'
-        };
-        showModal = false;
-        await cargarPasajeros();
-      }
-      loading = false;
-    }
-  
-    // Cambiar estado del pasajero
-    async function cambiarEstado(pasajero: Pasajero): Promise<void> {
-      if (pasajero.estado === 'buscado') return;
-  
-      loading = true;
-      const nuevoEstado: EstadoPasajero = pasajero.estado === 'pendiente' ? 'confirmado' : 'buscado';
-      
-      const { error } = await supabase
-        .from('pasajeros')
-        .update({ estado: nuevoEstado })
-        .eq('id', pasajero.id);
-  
-      if (error) {
-        message = `Error actualizando estado: ${error.message}`;
-        console.error(message);
-      } else {
-        await cargarPasajeros();
-      }
-      loading = false;
-    }
-  
-    // Función de ordenación segura
-    function ordenarPorFecha(a: Pasajero, b: Pasajero): number {
-      try {
-        const fechaA = new Date(a.hora_busqueda).getTime();
-        const fechaB = new Date(b.hora_busqueda).getTime();
-        return fechaB - fechaA;
-      } catch {
-        return 0;
-      }
-    }
-  
-    // Formatear fecha
-    function formatFecha(fechaISO: string): string {
-      try {
-        const fecha = new Date(fechaISO);
-        return isNaN(fecha.getTime()) ? '-' : fecha.toLocaleString('es-ES', {
-          day: '2-digit',
-          month: '2-digit',
-          year: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit'
-        });
-      } catch {
-        return '-';
-      }
-    }
-  
-    // Cambiar filtro
-    function cambiarFiltro(nuevoFiltro: EstadoPasajero): void {
-      filtroEstado = nuevoFiltro;
+  interface Pasajero {
+    id: string;
+    nombre: string;
+    apellido: string;
+    telefono: string;
+    direccion: string | null;
+    hora_busqueda: string;
+    control_reporto: string | null;
+    estado: EstadoPasajero;
+    created_at: string;
+  }
+
+  interface FormPasajero {
+    nombre: string;
+    apellido: string;
+    telefono: string;
+    direccion: string;
+    hora_busqueda: string;  // Ahora espera formato HH:MM
+    control_reporto: string;
+    estado: EstadoPasajero;
+  }
+
+  // Estados del componente
+  let showModal: boolean = false;
+  let loading: boolean = false;
+  let message: string = '';
+
+  // Formulario
+  let form: FormPasajero = {
+    nombre: '',
+    apellido: '',
+    telefono: '',
+    direccion: '',
+    hora_busqueda: '',  // Formato HH:MM
+    control_reporto: '',
+    estado: 'pendiente'
+  };
+
+  // Listas de pasajeros
+  let pasajeros: Pasajero[] = [];
+  let pasajerosFiltrados: Pasajero[] = [];
+  let filtroEstado: EstadoPasajero = 'pendiente';
+
+  // Cargar pasajeros al montar el componente
+  onMount(async () => {
+    await cargarPasajeros();
+  });
+
+  // Función para cargar pasajeros
+  async function cargarPasajeros(): Promise<void> {
+    loading = true;
+    const { data, error } = await supabase
+      .from('pasajeros')
+      .select('*')
+      .order('hora_busqueda', { ascending: false });
+
+    if (error) {
+      message = `Error cargando pasajeros: ${error.message}`;
+      console.error(message);
+    } else if (data) {
+      pasajeros = data;
       filtrarPasajeros();
     }
-  
-    // Manejar tecla en fila de tabla (para accesibilidad)
-    function handleKeyDown(event: KeyboardEvent, pasajero: Pasajero): void {
-      if (event.key === 'Enter' || event.key === ' ') {
-        event.preventDefault();
-        cambiarEstado(pasajero);
-      }
+    loading = false;
+  }
+
+  // Filtrar pasajeros según estado
+  function filtrarPasajeros(): void {
+    pasajerosFiltrados = pasajeros.filter(p => p.estado === filtroEstado);
+  }
+
+  // Convertir hora manual (HH:MM) a timestamp con fecha actual
+  function convertirHoraManual(hora: string): string {
+    if (!hora) return '';
+    
+    const [horas, minutos] = hora.split(':').map(Number);
+    const fecha = new Date();
+    
+    fecha.setHours(horas, minutos, 0, 0);
+    
+    return fecha.toISOString();
+  }
+
+  // Guardar nuevo pasajero
+  async function guardarPasajero(): Promise<void> {
+    if (!form.nombre || !form.apellido || !form.telefono || !form.hora_busqueda) {
+      message = 'Por favor complete todos los campos requeridos';
+      return;
     }
-  </script>
+
+    // Validar formato de hora (HH:MM)
+    if (!/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/.test(form.hora_busqueda)) {
+      message = 'Formato de hora inválido. Use HH:MM (ej: 14:30)';
+      return;
+    }
+
+    loading = true;
+    
+    // Convertir hora manual a timestamp completo
+    const horaCompleta = convertirHoraManual(form.hora_busqueda);
+    
+    const { error } = await supabase
+      .from('pasajeros')
+      .insert([{
+        ...form,
+        hora_busqueda: horaCompleta,
+        direccion: form.direccion || null,
+        control_reporto: form.control_reporto || null
+      }]);
+
+    if (error) {
+      message = `Error guardando pasajero: ${error.message}`;
+      console.error(message);
+    } else {
+      message = 'Pasajero registrado exitosamente';
+      form = {
+        nombre: '',
+        apellido: '',
+        telefono: '',
+        direccion: '',
+        hora_busqueda: '',
+        control_reporto: '',
+        estado: 'pendiente'
+      };
+      showModal = false;
+      await cargarPasajeros();
+    }
+    loading = false;
+  }
+
+  // Cambiar estado del pasajero
+  async function cambiarEstado(pasajero: Pasajero): Promise<void> {
+    if (pasajero.estado === 'buscado') return;
+
+    loading = true;
+    const nuevoEstado: EstadoPasajero = pasajero.estado === 'pendiente' ? 'confirmado' : 'buscado';
+    
+    const { error } = await supabase
+      .from('pasajeros')
+      .update({ estado: nuevoEstado })
+      .eq('id', pasajero.id);
+
+    if (error) {
+      message = `Error actualizando estado: ${error.message}`;
+      console.error(message);
+    } else {
+      await cargarPasajeros();
+    }
+    loading = false;
+  }
+
+  // Función de ordenación segura por fecha
+function ordenarPorFecha(a: Pasajero, b: Pasajero): number {
+  try {
+    // Convertimos las horas de búsqueda a timestamps para comparar
+    const fechaA = new Date(a.hora_busqueda).getTime();
+    const fechaB = new Date(b.hora_busqueda).getTime();
+    
+    // Orden descendente (más reciente primero)
+    return fechaB - fechaA;
+    
+  } catch (error) {
+    console.error("Error al ordenar por fecha:", error);
+    return 0; // Si hay error, no cambia el orden
+  }
+}
+
+  // Formatear fecha para mostrar solo la hora
+  function formatHora(fechaISO: string): string {
+    try {
+      const fecha = new Date(fechaISO);
+      if (isNaN(fecha.getTime())) return '-';
+      
+      // Mostrar solo la hora en formato HH:MM
+      return fecha.toLocaleTimeString('es-ES', {
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+      });
+    } catch {
+      return '-';
+    }
+  }
+
+  // Cambiar filtro
+  function cambiarFiltro(nuevoFiltro: EstadoPasajero): void {
+    filtroEstado = nuevoFiltro;
+    filtrarPasajeros();
+  }
+
+  // Manejar tecla en fila de tabla (para accesibilidad)
+  function handleKeyDown(event: KeyboardEvent, pasajero: Pasajero): void {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      cambiarEstado(pasajero);
+    }
+  }
+</script>
   
   <div class="container">
     <!-- Notificaciones -->
@@ -267,7 +296,6 @@
       </div>
     {/if}
   
-    <!-- Lista de pasajeros -->
     <div class="pasajeros-list">
       <h2>Pasajeros {filtroEstado === 'pendiente' ? 'Pendientes' : filtroEstado === 'confirmado' ? 'Confirmados' : 'Buscados'}</h2>
       
@@ -325,7 +353,10 @@
                     <td>{pasajero.apellido}</td>
                     <td>{pasajero.telefono}</td>
                     <td>{pasajero.direccion || '-'}</td>
-                    <td>{formatFecha(pasajero.hora_busqueda)}</td>
+                    <td>
+                      <!-- Cambiado formatFecha por formatHora para mostrar solo HH:MM -->
+                      {formatHora(pasajero.hora_busqueda)}
+                    </td>
                     <td>{pasajero.control_reporto || '-'}</td>
                     <td class:estado-pendiente={pasajero.estado === 'pendiente'}
                         class:estado-confirmado={pasajero.estado === 'confirmado'}
@@ -340,7 +371,7 @@
         {/each}
       {/if}
     </div>
-  </div>
+  </div> 
   
   <style>
     :global(body) {
