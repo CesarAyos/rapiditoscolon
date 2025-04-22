@@ -2,6 +2,8 @@
 	import { onMount } from 'svelte';
 	import { supabase } from '../components/supabase.js';
 	import { protegerRuta } from './protegerRuta.js';
+	
+	
 
 	let solicitudes: any[] = [];
 	let carrerasOrganizadas: any[][] = [];
