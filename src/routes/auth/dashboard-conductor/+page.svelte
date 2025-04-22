@@ -159,7 +159,7 @@
 					.update({
 						estado: nuevoEstado,
 						descripcion: descripcion || null,
-						updated_at: new Date().toISOString() // Campo opcional para tracking
+						
 					})
 					.eq('id', ultimoEstado.id);
 
