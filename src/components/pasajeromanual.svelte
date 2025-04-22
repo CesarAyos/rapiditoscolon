@@ -256,7 +256,7 @@
 	}
 </script>
 
-<!-- Resto del template (igual que antes) -->
+
 <div class="container">
 	{#if message}
 		<div class="notification {message.includes('Error') ? 'error' : 'success'}">
@@ -427,7 +427,7 @@
 </div>
 
 <style>
-	/* Estilos anteriores se mantienen igual */
+	
 	:global(body) {
 		font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
 		margin: 0;

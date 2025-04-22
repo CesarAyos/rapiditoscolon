@@ -7,7 +7,6 @@
 	import type { Session } from '@supabase/supabase-js';
 	import Estado from '../../../../components/estado.svelte';
 	import Turnosasignados from '../../../../components/turnosasignados.svelte';
-	
 
 	type Conductor = {
 		id: number;
@@ -35,7 +34,7 @@
 	const session = writable<Session | null>(null);
 	const trackingActive = writable<boolean>(false);
 	const positionHistory = writable<PosicionConductor[]>([]);
-	const otherDrivers = writable<Conductor[]>([]);
+	const otherDrivers = writable<(Conductor & { lastPosition?: { lat: number; lng: number; timestamp: string } })[]>([]);
 
 	// Variables reactivas
 	let conductorData: Conductor | null = null;
@@ -48,7 +47,7 @@
 	let mapContainer: HTMLDivElement;
 	let watchId: number | null = null;
 	let isTracking = false;
-	let drivers: Conductor[] = [];
+	let drivers: (Conductor & { lastPosition?: { lat: number; lng: number; timestamp: string } })[] = [];
 	let history: PosicionConductor[] = [];
 	let L: any = null;
 	let userInitiatedTracking = false;
@@ -88,7 +87,7 @@
 		}
 	};
 
-	// Guardar posición en la base de datos (CORREGIDO)
+	// Guardar posición en la base de datos
 	const savePosition = async (lat: number, lng: number, accuracy?: number) => {
 		if (!conductorData) {
 			console.error('No hay datos de conductor');
@@ -103,10 +102,7 @@
 			timestamp: new Date().toISOString()
 		};
 
-		console.log('Intentando guardar posición:', positionData);
-
 		try {
-			// Usamos upsert en lugar de update/insert separados
 			const { data, error: upsertError } = await supabase
 				.from('conductor_posiciones')
 				.upsert(positionData, { onConflict: 'conductor_id' });
@@ -115,26 +111,20 @@
 				throw upsertError;
 			}
 
-			console.log('Posición guardada exitosamente:', data);
 			return data;
 		} catch (err) {
 			console.error('Error en savePosition:', err);
-
-			// Intento alternativo con insert directo
 			try {
-				console.log('Intentando insert directo como fallback');
 				const { data, error: insertError } = await supabase
 					.from('conductor_posiciones')
 					.insert(positionData)
 					.select();
 
 				if (insertError) throw insertError;
-
-				console.log('Posición insertada exitosamente (fallback):', data);
 				return data;
 			} catch (fallbackErr) {
 				console.error('Error en fallback insert:', fallbackErr);
-				error.set(`Error al guardar posición:`);
+				error.set(`Error al guardar posición`);
 				throw fallbackErr;
 			}
 		}
@@ -226,7 +216,7 @@
 			await getOtherDrivers();
 		} catch (err) {
 			console.error('Error en updatePosition:', err);
-			error.set(`Error al actualizar posición: `);
+			error.set(`Error al actualizar posición`);
 		}
 	};
 
@@ -307,16 +297,16 @@
 
 	// Detener seguimiento
 	const stopTracking = () => {
-  if (!browser) return;
+		if (!browser) return;
 
-  if (watchId !== null) {
-    navigator.geolocation.clearWatch(watchId);
-    watchId = null;
-  }
-  trackingActive.set(false);
-  saveTrackingState(false); // Añade esta línea
-  console.log('Seguimiento GPS detenido');
-};
+		if (watchId !== null) {
+			navigator.geolocation.clearWatch(watchId);
+			watchId = null;
+		}
+		trackingActive.set(false);
+		saveTrackingState(false);
+		console.log('Seguimiento GPS detenido');
+	};
 
 	// Guardar estado en localStorage
 	const saveTrackingState = (isActive: boolean) => {
@@ -334,95 +324,124 @@
 		return false;
 	};
 
+	// Función auxiliar para actualizar marcadores de otros conductores
+	const updateOtherDriverMarker = (driverId: number, lat: number, lng: number, driverData: Conductor) => {
+		if (!map || !L) return;
+
+		const marker = otherMarkers[driverId];
+		const position = [lat, lng];
+		
+		if (marker) {
+			// Actualizar posición existente con animación
+			marker.setLatLng(position);
+		} else {
+			// Crear nuevo marcador
+			otherMarkers[driverId] = L.marker(position, {
+				icon: L.divIcon({
+					html: `
+						<div style="position: relative;">
+							<img src="https://cdn-icons-png.flaticon.com/512/477/477103.png" 
+								 style="width: 32px; height: 32px;"/>
+							<div style="position: absolute; 
+									   top: -10px; 
+									   left: 50%; 
+									   transform: translateX(-50%);
+									   background: white; 
+									   border-radius: 50%; 
+									   padding: 2px 5px;
+									   border: 2px solid #666666;
+									   font-weight: bold;
+									   font-size: 12px;">
+								${driverData.control}
+							</div>
+						</div>
+					`,
+					iconSize: [32, 40],
+					iconAnchor: [16, 40]
+				}),
+				title: driverData.nombre
+			})
+			.addTo(map)
+			.bindPopup(
+				`<b>${driverData.nombre}</b><br>
+				 Placa: ${driverData.placa}<br>
+				 Control: ${driverData.control}`
+			);
+		}
+		
+		// Actualizar la lista de otros conductores
+		otherDrivers.update(drivers => {
+			const existing = drivers.find(d => d.id === driverId);
+			if (existing) {
+				return drivers.map(d => 
+					d.id === driverId 
+						? { ...d, lastPosition: { lat, lng, timestamp: new Date().toISOString() } } 
+						: d
+				);
+			} else {
+				return [...drivers, { ...driverData, lastPosition: { lat, lng, timestamp: new Date().toISOString() } }];
+			}
+		});
+	};
+
 	// Obtener otros conductores
 	const getOtherDrivers = async () => {
 		if (!browser || !L || !map) return;
 
 		try {
+			// Obtener posiciones de los últimos 5 minutos
+			const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+			
 			const { data, error: sbError } = await supabase
 				.from('conductor_posiciones')
-				.select(
-					`
+				.select(`
 					conductor_id,
 					lat,
 					lng,
 					accuracy,
 					timestamp,
 					conductor!fk_conductor(id, nombre, placa, control, propiedad, telefono)
-				`
-				)
-				.order('timestamp', { ascending: false })
-				.limit(50);
+				`)
+				.gt('timestamp', fiveMinutesAgo) // Solo posiciones recientes
+				.order('timestamp', { ascending: false });
 
 			if (sbError) throw sbError;
 			if (!data) return;
 
-			const uniqueDrivers = data.reduce((acc: any[], current) => {
-				if (!acc.some((item) => item.conductor_id === current.conductor_id)) {
+			// Agrupar por conductor_id y tomar la más reciente de cada uno
+			const latestPositions = data.reduce((acc: any[], current) => {
+				const existing = acc.find(item => item.conductor_id === current.conductor_id);
+				if (!existing) {
 					acc.push(current);
 				}
 				return acc;
 			}, []);
 
-			const activeDrivers = uniqueDrivers.filter(
+			const activeDrivers = latestPositions.filter(
 				(driver) => driver.conductor_id !== conductorData?.id
 			);
 
-			// Eliminar marcadores de conductores inactivos
+			// Limpiar marcadores antiguos
 			Object.keys(otherMarkers).forEach((id) => {
-				if (!activeDrivers.some((d) => d.conductor_id === parseInt(id))) {
-					map.removeLayer(otherMarkers[parseInt(id)]);
-					delete otherMarkers[parseInt(id)];
+				const driverId = parseInt(id);
+				if (!activeDrivers.some(d => d.conductor_id === driverId)) {
+					map.removeLayer(otherMarkers[driverId]);
+					delete otherMarkers[driverId];
 				}
 			});
 
-			// Actualizar o crear marcadores para conductores activos
+			// Actualizar o crear marcadores
 			activeDrivers.forEach((driver) => {
-				if (!otherMarkers[driver.conductor_id]) {
-					otherMarkers[driver.conductor_id] = L.marker([driver.lat, driver.lng], {
-						icon: L.divIcon({
-							html: `
-								<div style="position: relative;">
-									<img src="https://cdn-icons-png.flaticon.com/512/477/477103.png" 
-										 style="width: 32px; height: 32px;"/>
-									<div style="position: absolute; 
-											   top: -10px; 
-											   left: 50%; 
-											   transform: translateX(-50%);
-											   background: white; 
-											   border-radius: 50%; 
-											   padding: 2px 5px;
-											   border: 2px solid #666666;
-											   font-weight: bold;
-											   font-size: 12px;">
-										${driver.conductor.control}
-									</div>
-								</div>
-							`,
-							iconSize: [32, 40],
-							iconAnchor: [16, 40]
-						}),
-						title: driver.conductor.nombre
-					})
-						.addTo(map)
-						.bindPopup(
-							`<b>${driver.conductor.nombre}</b><br>
-							 Placa: ${driver.conductor.placa}<br>
-							 Control: ${driver.conductor.control}`
-						);
-				} else {
-					otherMarkers[driver.conductor_id].setLatLng([driver.lat, driver.lng]);
-				}
+				updateOtherDriverMarker(
+					driver.conductor_id,
+					driver.lat,
+					driver.lng,
+					driver.conductor
+				);
 			});
-
-			otherDrivers.set(
-				activeDrivers.map((d) => ({
-					...d.conductor
-				}))
-			);
 		} catch (err) {
 			console.error('Error en getOtherDrivers:', err);
-			error.set('Error al cargar otros conductores: ');
+			error.set('Error al cargar otros conductores');
 		}
 	};
 
@@ -492,29 +511,44 @@
 				}
 			});
 
-			const channel = supabase
-				.channel('conductor_updates')
+			// Suscripción más específica para cambios de posición
+			const positionsChannel = supabase
+				.channel('positions_updates')
 				.on(
 					'postgres_changes',
 					{
-						event: '*',
+						event: 'INSERT',
 						schema: 'public',
 						table: 'conductor_posiciones'
 					},
 					async (payload) => {
-						console.log('Cambio en conductor_posiciones:', payload);
-						if (
-							payload.new &&
-							'conductor_id' in payload.new &&
-							payload.new.conductor_id !== conductorData?.id
-						) {
-							await getOtherDrivers();
+						// Solo actualizar si es un conductor diferente
+						if (payload.new?.conductor_id !== conductorData?.id) {
+							// Obtener datos completos del conductor
+							const { data: driverData, error } = await supabase
+								.from('conductor')
+								.select('*')
+								.eq('id', payload.new.conductor_id)
+								.single();
+								
+							if (!error && driverData) {
+								// Actualizar marcador inmediatamente
+								updateOtherDriverMarker(
+									payload.new.conductor_id,
+									payload.new.lat,
+									payload.new.lng,
+									driverData
+								);
+							}
 						}
 					}
 				)
 				.subscribe();
 
-			return { authSubscription: authData.subscription, realtimeSubscription: channel };
+			return { 
+				authSubscription: authData.subscription, 
+				realtimeSubscription: positionsChannel 
+			};
 		} catch (error) {
 			console.error('Error en setupSubscriptions:', error);
 			return { authSubscription: null, realtimeSubscription: null };
@@ -551,13 +585,14 @@
 					await getOtherDrivers();
 				}
 
+				// Intervalo de actualización más frecuente (10 segundos)
 				updateInterval = setInterval(async () => {
 					try {
 						await getOtherDrivers();
 					} catch (error) {
 						console.error('Error en intervalo de actualización:', error);
 					}
-				}, 30000);
+				}, 10000);
 			} catch (error) {
 				console.error('Error en inicialización:', error);
 			}
