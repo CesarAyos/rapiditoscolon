@@ -103,10 +103,6 @@
         <form on:submit|preventDefault={handleLogin} class="login-form">
           <!-- Selector de tipo de usuario -->
           <div class="user-type-selector">
-            <!-- <label class:active={userType === 'pasajero'}>
-              <input type="radio" name="userType" bind:group={userType} value="pasajero" />
-              <span class="user-type-label">👤 Pasajero</span>
-            </label> -->
 
             <label class:active={userType === 'conductor'}>
               <input type="radio" name="userType" bind:group={userType} value="conductor" />
@@ -116,7 +112,7 @@
 
           <!-- Campos de formulario -->
           <div class="form-group">
-            <input type="email" bind:value={email} placeholder="Correo electrónico" required />
+            <input type="email" bind:value={email} placeholder="Correo electrónico" required autocomplete="username" />
             <div class="underline"></div>
           </div>
 
@@ -127,18 +123,11 @@
               placeholder="Contraseña"
               minlength="6"
               required
+			  autocomplete="current-password"
             />
             <div class="underline"></div>
           </div>
 
-          <!-- <div class="form-options">
-            <label class="remember-me">
-              <input type="checkbox" bind:checked={rememberMe} />
-              <span class="checkmark"></span>
-              Recordar sesión
-            </label>
-            <a href="/auth/recuperar" class="forgot-password"> ¿Olvidaste tu contraseña? </a>
-          </div> -->
 
           <button type="submit" class="btn-submit" disabled={isLoading}>
             {#if isLoading}
@@ -152,8 +141,7 @@
         </form>
 
         <div class="register-link">
-          <!-- ¿No tienes cuenta?
-          <a href="/{userType}">Regístrate como {userType}</a> -->
+         
           <a href="/conductor">Regístrate como conductor </a>
         </div>
       </div>
@@ -162,14 +150,7 @@
 </div>
 
 <style>
-	/* Estilos generales */
-	:global(body) {
-		font-family: 'Poppins', sans-serif;
-		margin: 0;
-		padding: 0;
-		background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
-		min-height: 100vh;
-	}
+	
 
 	.wrapper {
 		display: flex;

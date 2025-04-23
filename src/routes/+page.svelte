@@ -1,28 +1,46 @@
-<body>
-	<div class="wrapper">
-		<div class="container main-card">
-			<div class="">
-				<img src="/favicon.png" alt="icono" class="img-fluid" style="width: 100px;" />
-			</div>
-			<h1 class="title">¡Bienvenido a <span>Rapiditos Colón</span>!</h1>
-			<p class="subtitle">Tu solución de transporte rápido y confiable</p>
+<script>
+	import { onMount } from 'svelte';
 
+	let hydrated = false;
+
+	onMount(() => {
+		hydrated = true;
+	});
+</script>
+
+
+	
+
+<svelte:head>
+	<title>¡Bienvenido a Rapiditos Colón!</title>
+</svelte:head>
+
+<div class="wrapper">
+	<div class="container main-card">
+		<div class="">
+			<img src="/favicon.png" alt="icono" class="img-fluid" style="width: 100px;" />
+		</div>
+		<h1 class="title">¡Bienvenido a <span>Rapiditos Colón</span>!</h1>
+		<p class="subtitle">Tu solución de transporte rápido y confiable</p>
+
+		{#if hydrated}
 			<div class="btn-grid">
 				<a href="/auth" class="action-btn driver-btn">
 					<span class="btn-icon">🚗</span>
-					<span>Recuerda conducir con precaucion</span>
+					<span>Recuerda conducir con precaución</span>
 					<div class="hover-effect"></div>
 				</a>
 			</div>
+		{/if}
 
-			<div class="decorations">
-				<div class="circle circle-1"></div>
-				<div class="circle circle-2"></div>
-				<div class="circle circle-3"></div>
-			</div>
+		<div class="decorations">
+			<div class="circle circle-1"></div>
+			<div class="circle circle-2"></div>
+			<div class="circle circle-3"></div>
 		</div>
 	</div>
-</body>
+</div>
+
 
 <style>
 	@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap');
@@ -43,24 +61,9 @@
 		padding: 0;
 	}
 
-	body {
-		font-family: 'Poppins', sans-serif;
-		background: linear-gradient(135deg, var(--primary-blue) 0%, var(--primary-orange) 100%);
-		min-height: 100vh;
-		overflow: auto;
-		display: flex;
-		flex-direction: column;
-		justify-content: center;
-		align-items: center;
-		position: relative;
-		padding: 20px;
-	}
-
-
-
 	.wrapper {
 		width: 100%;
-    height: 90vh;
+		height: 90vh;
 		display: flex;
 		flex-direction: column;
 		align-items: center;
@@ -145,8 +148,6 @@
 		background: linear-gradient(45deg, var(--primary-blue), var(--secondary-blue));
 		color: white;
 	}
-
-	
 
 	.hover-effect {
 		position: absolute;
@@ -260,13 +261,7 @@
 
 	/* Responsive styles */
 	@media (max-width: 768px) {
-		body {
-			padding: 15px;
-			justify-content: flex-start;
-			padding-top: 30px;
-		}
-
-	
+		
 
 		.main-card {
 			padding: 2rem 1.5rem;
@@ -289,11 +284,6 @@
 	}
 
 	@media (max-width: 480px) {
-		body {
-			padding: 10px;
-			padding-top: 20px;
-		}
-
 		
 
 		.main-card {
