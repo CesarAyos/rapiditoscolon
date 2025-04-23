@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import { writable } from 'svelte/store';
-	import { browser } from '$app/environment';
 	import { supabase } from '../../../components/supabase';
 	import Lock from '../../../components/lock.svelte';
 	import type { Session, Subscription } from '@supabase/supabase-js';
@@ -38,6 +37,48 @@
 	let loading = false;
 	let currentSession: Session | null = null;
 
+	onMount(() => {
+    let authListener: { subscription: Subscription } | null = null;
+
+    // Usamos una IIFE async para manejar la lógica asíncrona
+    (async () => {
+        try {
+            // 1. Primero obtener la sesión
+            const userSession = await getSession();
+
+            // 2. Solo si hay sesión, obtener conductor
+            if (userSession) {
+                await obtenerConductor();
+            }
+
+            // 3. Configurar listener de autenticación
+            const { data: authData } = supabase.auth.onAuthStateChange(async (event, authSession) => {
+                if (event === 'SIGNED_IN' && authSession) {
+                    session.set(authSession);
+                    await obtenerConductor();
+                } else if (event === 'SIGNED_OUT') {
+                    session.set(null);
+                    conductor.set(null);
+                    estadoActual.set('descanso');
+                    error.set('');
+                }
+            });
+
+            authListener = authData;
+        } catch (err) {
+            console.error('Error en inicialización:', err);
+            error.set('Error al cargar la sesión');
+        }
+    })();
+
+    // Función de limpieza sincrónica
+    return () => {
+        if (authListener?.subscription) {
+            authListener.subscription.unsubscribe();
+        }
+    };
+});
+
 	// Suscripciones
 	conductor.subscribe((value) => (conductorData = value));
 	estadoActual.subscribe((value) => (currentEstado = value));
@@ -47,18 +88,27 @@
 
 	const getSession = async (): Promise<Session | null> => {
 		try {
+			isLoading.set(true);
 			const { data, error: sbError } = await supabase.auth.getSession();
 
-			if (sbError) throw sbError;
-			if (!data.session) return null;
+			if (sbError) {
+				throw sbError;
+			}
+
+			if (!data.session) {
+				session.set(null);
+				return null;
+			}
 
 			session.set(data.session);
 			return data.session;
 		} catch (err) {
 			console.error('Error en getSession:', err);
 			error.set(err instanceof Error ? err.message : 'Error de autenticación');
-			isLoading.set(false);
+			session.set(null);
 			return null;
+		} finally {
+			isLoading.set(false);
 		}
 	};
 
@@ -158,8 +208,7 @@
 					.from('estado_conductor')
 					.update({
 						estado: nuevoEstado,
-						descripcion: descripcion || null,
-						
+						descripcion: descripcion || null
 					})
 					.eq('id', ultimoEstado.id);
 
@@ -189,59 +238,25 @@
 		}
 	};
 
-	onMount(() => {
-		let authListener: { subscription: Subscription } | null = null;
-
-		const initialize = async () => {
-			try {
-				const userSession = await getSession();
-				if (userSession) {
-					await obtenerConductor();
-				}
-			} catch (error) {
-				console.error('Error en inicialización:', error);
-				isLoading.set(false);
-			}
-		};
-
-		initialize();
-
-		// Configurar listener de autenticación con tipado correcto
-		const { data: authData } = supabase.auth.onAuthStateChange(async (event, authSession) => {
-			if (event === 'SIGNED_IN' && authSession) {
-				session.set(authSession); // Usamos el store session.set()
-				await obtenerConductor();
-			} else if (event === 'SIGNED_OUT') {
-				conductor.set(null);
-				estadoActual.set('descanso');
-				session.set(null);
-				error.set('');
-			}
-		});
-
-		authListener = authData;
-
-		return () => {
-			if (authListener?.subscription) {
-				authListener.subscription.unsubscribe();
-			}
-		};
-	});
+	
 </script>
 
 <div class="dashboard-container">
 	<nav class="dashboard-nav">
 		<div class="nav-user">
-			{#if conductorData}
-				<div class="badge-container">
-					<span class="user-badge">Control: {conductorData.control}</span>
-					<span class="user-badge">{conductorData.propiedad}: {conductorData.nombre}</span>
-					<span class="user-badge">Placa: {conductorData.placa}</span>
-					<a href="/auth/dashboard-conductor/maps" class="user-badge">Mapa</a>
-					<Lock />
-				</div>
-			{:else}
+			{#if currentSession}
+				{#if conductorData}
+					<div class="badge-container">
+						<span class="user-badge">Control: {conductorData.control}</span>
+						<span class="user-badge">{conductorData.propiedad}: {conductorData.nombre}</span>
+						<span class="user-badge">Placa: {conductorData.placa}</span>
+						<a href="/auth/dashboard-conductor/maps" class="user-badge">Mapa</a>
+						<Lock />
+					</div>
+				{:else}
 				<span class="user-name">No autenticado</span>
+				<a href="/auth/login" class="login-link">Iniciar sesión</a>
+				{/if}
 			{/if}
 		</div>
 	</nav>
@@ -351,7 +366,6 @@
 		</div>
 	</main>
 </div>
-
 
 <style>
 	/* Estilos base */
