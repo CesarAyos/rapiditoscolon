@@ -4,7 +4,7 @@ export async function protegerRuta(): Promise<boolean> {
   const { data: { session }, error } = await supabase.auth.getSession();
   
   if (error || !session) {
-    window.location.href = '/login';
+    window.location.href = '/auth';
     return false;
   }
   

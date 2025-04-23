@@ -5,8 +5,6 @@
 	import { supabase } from '../../../../components/supabase';
 	import Lock from '../../../../components/lock.svelte';
 	import type { Session } from '@supabase/supabase-js';
-	import Estado from '../../../../components/estado.svelte';
-	import Turnosasignados from '../../../../components/turnosasignados.svelte';
 
 	type Conductor = {
 		id: number;
@@ -62,6 +60,70 @@
 	trackingActive.subscribe((value) => (isTracking = value));
 	positionHistory.subscribe((value) => (history = value));
 	otherDrivers.subscribe((value) => (drivers = value));
+
+	onMount(() => {
+		let updateInterval: NodeJS.Timeout;
+		let authSubscription: { unsubscribe: () => void } | null = null;
+		let realtimeSubscription: any = null;
+
+		const initialize = async () => {
+			try {
+				console.log('Inicializando componente...');
+				await getSession();
+				await new Promise((resolve) => setTimeout(resolve, 50));
+				await obtenerConductor();
+				await initMap();
+
+				// Cargar estado del seguimiento
+				const savedTrackingState = loadTrackingState();
+				if (savedTrackingState) {
+					userInitiatedTracking = true;
+					startTracking();
+				}
+
+				const subscriptions = await setupSubscriptions();
+				authSubscription = subscriptions.authSubscription;
+				realtimeSubscription = subscriptions.realtimeSubscription;
+
+				if (conductorData) {
+					getCurrentPosition();
+					await getOtherDrivers();
+				}
+
+				// Intervalo de actualización más frecuente (10 segundos)
+				updateInterval = setInterval(async () => {
+					try {
+						await getOtherDrivers();
+					} catch (error) {
+						console.error('Error en intervalo de actualización:', error);
+					}
+				}, 10000);
+			} catch (error) {
+				console.error('Error en inicialización:', error);
+			}
+		};
+
+		initialize();
+
+		return () => {
+			console.log('Limpiando componente...');
+			clearInterval(updateInterval);
+			stopTracking();
+
+			if (authSubscription) {
+				authSubscription.unsubscribe();
+			}
+
+			if (realtimeSubscription) {
+				supabase.removeChannel(realtimeSubscription);
+			}
+
+			if (map) {
+				map.remove();
+				map = null;
+			}
+		};
+	});
 
 	// Inicializar mapa
 	const initMap = async (): Promise<boolean> => {
@@ -480,7 +542,7 @@
 			}
 
 			conductor.set(data);
-			console.log('Conductor obtenido:', data);
+			
 		} catch (err) {
 			console.error('Error en obtenerConductor:', err);
 			error.set(err instanceof Error ? err.message : 'Error desconocido al obtener conductor');
@@ -555,70 +617,7 @@
 		}
 	};
 
-	// Inicialización al montar el componente
-	onMount(() => {
-		let updateInterval: NodeJS.Timeout;
-		let authSubscription: { unsubscribe: () => void } | null = null;
-		let realtimeSubscription: any = null;
-
-		const initialize = async () => {
-			try {
-				console.log('Inicializando componente...');
-				await getSession();
-				await new Promise((resolve) => setTimeout(resolve, 50));
-				await obtenerConductor();
-				await initMap();
-
-				// Cargar estado del seguimiento
-				const savedTrackingState = loadTrackingState();
-				if (savedTrackingState) {
-					userInitiatedTracking = true;
-					startTracking();
-				}
-
-				const subscriptions = await setupSubscriptions();
-				authSubscription = subscriptions.authSubscription;
-				realtimeSubscription = subscriptions.realtimeSubscription;
-
-				if (conductorData) {
-					getCurrentPosition();
-					await getOtherDrivers();
-				}
-
-				// Intervalo de actualización más frecuente (10 segundos)
-				updateInterval = setInterval(async () => {
-					try {
-						await getOtherDrivers();
-					} catch (error) {
-						console.error('Error en intervalo de actualización:', error);
-					}
-				}, 10000);
-			} catch (error) {
-				console.error('Error en inicialización:', error);
-			}
-		};
-
-		initialize();
-
-		return () => {
-			console.log('Limpiando componente...');
-			clearInterval(updateInterval);
-			stopTracking();
-
-			if (authSubscription) {
-				authSubscription.unsubscribe();
-			}
-
-			if (realtimeSubscription) {
-				supabase.removeChannel(realtimeSubscription);
-			}
-
-			if (map) {
-				map.remove();
-				map = null;
-			}
-		};
-	});
+	
 
 	// Limpieza al desmontar el componente
 	onDestroy(() => {
@@ -651,7 +650,7 @@
 					<span class="user-badge">Placa: {conductorData.placa}</span>
 					<a href="/auth/dashboard-conductor/maps" class="user-badge">Mapa</a>
 					<a href="/auth/dashboard-conductor/maps/admin" class="user-badge">Admin</a>
-					<a href="/pasajeros" class="user-badge">Pasajeros</a>
+					<a href="/gestion" class="user-badge">Gestion</a>
 					<Lock />
 				</div>
 			{:else}
@@ -703,7 +702,7 @@
 					class="map-btn"
 					title="Recargar la página"
 				>
-					🔄 Recargar para ver estados de conductores
+					🔄 Recargar Mapa
 				</button>
 			</div>
 
@@ -732,11 +731,10 @@
 			{/if}
 		</div>
 	</main>
-	<Estado />
-	<Turnosasignados />
-
-	
 </div>
+
+
+  
 
 <style>
 	.dashboard-container {

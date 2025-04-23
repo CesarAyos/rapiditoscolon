@@ -4,12 +4,9 @@
 	import { browser } from '$app/environment';
 	import { supabase } from '../../../../../components/supabase';
 	import type * as Leaflet from 'leaflet';
-	import Estado from '../../../../../components/estado.svelte';
-	import Sugerencias from '../../../../../components/sugerencias.svelte';
-	import Turnos from '../../../../../components/turnos.svelte';
-	import Carreras from "../../../../../components/carreras.svelte";
-	import Pasajeromanual from '../../../../../components/pasajeromanual.svelte';
+	import { protegerRuta } from '../../../../../components/protegerRuta';
 	
+
 	interface ConductorFromDB {
 		id: number;
 		nombre: string;
@@ -31,13 +28,16 @@
 
 	// Extender la interfaz Marker de Leaflet
 	interface CustomMarker extends Leaflet.Marker {
-		slideTo: (latlng: Leaflet.LatLngExpression, options?: {
-			duration?: number;
-			easeLinearity?: number;
-			noMoveStart?: boolean;
-			keepAtCenter?: boolean;
-			complete?: () => void;
-		}) => {
+		slideTo: (
+			latlng: Leaflet.LatLngExpression,
+			options?: {
+				duration?: number;
+				easeLinearity?: number;
+				noMoveStart?: boolean;
+				keepAtCenter?: boolean;
+				complete?: () => void;
+			}
+		) => {
 			cancel: () => void;
 		};
 	}
@@ -115,45 +115,48 @@
 
 	// Función para añadir animaciones a Leaflet
 	function addLeafletAnimations(leaflet: typeof Leaflet) {
-		(leaflet.Marker.prototype as CustomMarker).slideTo = function(newLatLng: Leaflet.LatLngExpression, options: any = {}) {
+		(leaflet.Marker.prototype as CustomMarker).slideTo = function (
+			newLatLng: Leaflet.LatLngExpression,
+			options: any = {}
+		) {
 			const duration = options.duration || 1000;
 			const easeLinearity = options.easeLinearity || 0.25;
 			const noMoveStart = options.noMoveStart || false;
 			const keepAtCenter = options.keepAtCenter || false;
-			
+
 			const marker = this as CustomMarker;
 			const from = marker.getLatLng();
 			const to = leaflet.latLng(newLatLng);
 			const map = this._map;
-			
+
 			let startTime: number | null = null;
 			let frame: number | null = null;
-			
+
 			const step = (timestamp: number) => {
 				if (!startTime) startTime = timestamp;
 				const progress = Math.min(1, (timestamp - startTime) / duration);
 				const easeProgress = 1 - Math.pow(1 - progress, 1 / easeLinearity);
-				
+
 				const lat = from.lat + (to.lat - from.lat) * easeProgress;
 				const lng = from.lng + (to.lng - from.lng) * easeProgress;
-				
+
 				marker.setLatLng([lat, lng]);
-				
+
 				if (keepAtCenter) {
 					map.panTo([lat, lng], { animate: false });
 				}
-				
+
 				if (progress < 1) {
 					frame = window.requestAnimationFrame(step);
 				} else if (options.complete) {
 					options.complete();
 				}
 			};
-			
+
 			if (!noMoveStart) {
 				frame = window.requestAnimationFrame(step);
 			}
-			
+
 			return {
 				cancel: () => {
 					if (frame) {
@@ -209,7 +212,8 @@
 
 			const { data, error } = await supabase
 				.from('conductor_posiciones')
-				.select(`
+				.select(
+					`
 					id,
 					conductor_id,
 					lat,
@@ -224,7 +228,8 @@
 						propiedad,
 						telefono
 					)
-				`)
+				`
+				)
 				.gt('timestamp', twoHoursAgo)
 				.order('timestamp', { ascending: false });
 
@@ -278,7 +283,7 @@
 
 			if (marker) {
 				marker.setPopupContent(createPopupContent(driver));
-				
+
 				const currentPos = marker.getLatLng();
 				const distance = currentPos.distanceTo(newPosition);
 				const duration = Math.min(2000, distance * 5);
@@ -292,13 +297,10 @@
 					marker.setLatLng(newPosition);
 				}
 			} else {
-				markers[driver.conductor_id] = L!
-					.marker(newPosition, {
-						icon: createDriverIcon(L!, driver.conductor.control)
-					}) as CustomMarker;
-				markers[driver.conductor_id]
-					.addTo(map!)
-					.bindPopup(createPopupContent(driver));
+				markers[driver.conductor_id] = L!.marker(newPosition, {
+					icon: createDriverIcon(L!, driver.conductor.control)
+				}) as CustomMarker;
+				markers[driver.conductor_id].addTo(map!).bindPopup(createPopupContent(driver));
 			}
 		});
 	};
@@ -320,9 +322,11 @@
 				(payload) => {
 					if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
 						const newPosition = payload.new as PosicionConductor;
-						activeDrivers.update(currentDrivers => {
-							const existingIndex = currentDrivers.findIndex(d => d.conductor_id === newPosition.conductor_id);
-							
+						activeDrivers.update((currentDrivers) => {
+							const existingIndex = currentDrivers.findIndex(
+								(d) => d.conductor_id === newPosition.conductor_id
+							);
+
 							if (existingIndex >= 0) {
 								const updatedDrivers = [...currentDrivers];
 								updatedDrivers[existingIndex] = {
@@ -340,7 +344,7 @@
 									.single()
 									.then(({ data }) => {
 										if (data) {
-											activeDrivers.update(drivers => [
+											activeDrivers.update((drivers) => [
 												...drivers,
 												{
 													...newPosition,
@@ -361,37 +365,38 @@
 	};
 
 	onMount(() => {
-    // Función de limpieza sincrónica
-    const cleanup = () => {
-        if (channel) supabase.removeChannel(channel);
-        if (updateInterval) clearInterval(updateInterval);
-        if (map) {
-            map.remove();
-            map = null;
-        }
-        mapInitialized = false;
-    };
+		
+		protegerRuta();
+		const cleanup = () => {
+			if (channel) supabase.removeChannel(channel);
+			if (updateInterval) clearInterval(updateInterval);
+			if (map) {
+				map.remove();
+				map = null;
+			}
+			mapInitialized = false;
+		};
 
-    // Función asíncrona de inicialización
-    const initialize = async () => {
-        try {
-            await ensureLeafletLoaded();
-            addLeafletAnimations(L!);
-            await initMap();
-            await getActiveDrivers();
-            channel = setupSubscriptions();
-            updateInterval = setInterval(getActiveDrivers, 30000);
-        } catch (error) {
-            console.error('Error en inicialización:', error);
-        }
-    };
+		// Función asíncrona de inicialización
+		const initialize = async () => {
+			try {
+				await ensureLeafletLoaded();
+				addLeafletAnimations(L!);
+				await initMap();
+				await getActiveDrivers();
+				channel = setupSubscriptions();
+				updateInterval = setInterval(getActiveDrivers, 30000);
+			} catch (error) {
+				console.error('Error en inicialización:', error);
+			}
+		};
 
-    // Ejecutar inicialización
-    initialize();
+		// Ejecutar inicialización
+		initialize();
 
-    // Retornar función de limpieza sincrónica
-    return cleanup;
-});
+		// Retornar función de limpieza sincrónica
+		return cleanup;
+	});
 
 	onDestroy(() => {
 		if (map) {
@@ -402,10 +407,6 @@
 		if (channel) supabase.removeChannel(channel);
 	});
 </script>
-
-
-
-
 
 <svelte:head>
 	<link
@@ -423,225 +424,215 @@
 			animation: pulse 1s infinite;
 		}
 		@keyframes pulse {
-			0% { transform: scale(1); }
-			50% { transform: scale(1.2); }
-			100% { transform: scale(1); }
+			0% {
+				transform: scale(1);
+			}
+			50% {
+				transform: scale(1.2);
+			}
+			100% {
+				transform: scale(1);
+			}
 		}
 	</style>
 </svelte:head>
 
+
 <div class="app-container">
 	<!-- Header -->
 	<header class="app-header">
-	  <h1 class="app-title">Mapa de Conductores Activos</h1>
-	  <button
-	  on:click={() => window.location.reload()}
-	  class="btn btn-info"
-	  title="Recargar la página"
-  >
-	  🔄 Recargar para ver estados de conductores
-  </button>
+		<h1 class="app-title">Mapa de Conductores Activos</h1>
 	</header>
-  
+	<div class="container mt-3 mb-3 d-flex justify-content-center gap-2 flex-wrap">
+		<a href="/auth/dashboard-conductor/maps" class="btn btn-primary">Mapa de seguimiento</a>
+		<a href="/pasajeros" class="btn btn-primary">Gestion</a>
+	</div>
+
 	<!-- Main Content -->
-	<main class="main-content">
-	  <!-- Map Section -->
-	  <section class="map-section">
-		<div bind:this={mapContainer} class="map-view">
-		  {#if !mapInitialized}
-			<div class="map-loading-overlay">
-			  <div class="loading-spinner"></div>
-			  <p class="loading-text">Cargando mapa...</p>
+	<main class="main-content pt-5 mt-5">
+		<section class="map-section">
+			<div bind:this={mapContainer} class="map-view">
+				{#if !mapInitialized}
+					<div class="map-loading-overlay">
+						<div class="loading-spinner"></div>
+						<p class="loading-text">Cargando mapa...</p>
+					</div>
+				{/if}
 			</div>
-		  {/if}
-		</div>
-	  </section>
-  
-	  <!-- Status Section -->
-	  <section class="status-section">
-		<Estado />
-	  </section>
-  
-	  <!-- Shifts Section -->
-	  <section class="shifts-section">
-		<Turnos />
-	  </section>
-
-	  <section class="shifts-section">
-		<Pasajeromanual/>
-	  </section>
-
-	  <section class="shifts-section">
-		<Carreras />
-	  </section>
-  
-	  <!-- Suggestions Section -->
-	  <section class="suggestions-section">
-		<Sugerencias />
-	  </section>
+		</section>
+		<button
+			on:click={() => window.location.reload()}
+			class="btn btn-info"
+			title="Recargar la página"
+		>
+			🔄 Recargar para ver Nuevos conductores
+		</button>
 	</main>
-  
+
 	<!-- Error Message -->
 	{#if errorMessage}
-	  <div class="error-notification">
-		<svg class="error-icon" viewBox="0 0 24 24">
-		  <path fill="currentColor" d="M11,15H13V17H11V15M11,7H13V13H11V7M12,2C6.47,2 2,6.5 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20Z"/>
-		</svg>
-		<span>{errorMessage}</span>
-	  </div>
+		<div class="error-notification">
+			<svg class="error-icon" viewBox="0 0 24 24">
+				<path
+					fill="currentColor"
+					d="M11,15H13V17H11V15M11,7H13V13H11V7M12,2C6.47,2 2,6.5 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20Z"
+				/>
+			</svg>
+			<span>{errorMessage}</span>
+		</div>
 	{/if}
 </div>
 
 <style>
 	.app-container {
-	  font-family: 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
-	  max-width: 100%;
-	  min-height: 100vh;
-	  background-color: #f5f7fa;
-	  color: #333;
-	  padding: 0;
-	  margin: 0;
+		font-family: 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+		max-width: 100%;
+		min-height: 100vh;
+		background-color: #f5f7fa;
+		color: #333;
+		padding: 0;
+		margin: 0;
 	}
-	
+
 	/* Header Styles */
 	.app-header {
-	  position: relative;
-	  background: linear-gradient(135deg, #4f6ef7 0%, #2541fc 100%);
-	  color: white;
-	  padding: 1rem;
-	  padding-top: 80px;
-	  text-align: center;
-	  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+		position: relative;
+		background: linear-gradient(135deg, #4f6ef7 0%, #2541fc 100%);
+		color: white;
+		padding: 1rem;
+		padding-top: 10px;
+		text-align: center;
+		box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
 	}
-	
+
 	.app-title {
-	  font-size: 1.25rem;
-	  font-weight: 600;
-	  margin: 0;
-	  padding: 0.5rem 0;
+		font-size: 1.25rem;
+		font-weight: 600;
+		margin: 0;
+		padding: 0.5rem 0;
 	}
-	
-	
+
 	/* Main Content Styles */
 	.main-content {
-	  padding: 1rem;
-	  display: flex;
-	  flex-direction: column;
-	  gap: 1.5rem;
-	  max-width: 100%;
+		padding: 1rem;
+		display: flex;
+		flex-direction: column;
+		gap: 1.5rem;
+		max-width: 100%;
 	}
-	
+
+
 	/* Map Section */
 	.map-section {
-	  border-radius: 12px;
-	  overflow: hidden;
-	  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
-	  height: 60vh;
-	  max-height: 500px;
-	  position: relative;
+		border-radius: 12px;
+		overflow: hidden;
+		box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+		height: 60vh;
+		max-height: 500px;
+		position: relative;
 	}
-	
+
 	.map-view {
-	  width: 100%;
-	  height: 100%;
-	  background: #e8ecf1;
+		width: 100%;
+		height: 100%;
+		background: #e8ecf1;
 	}
-	
+
 	.map-loading-overlay {
-	  position: absolute;
-	  top: 0;
-	  left: 0;
-	  right: 0;
-	  bottom: 0;
-	  display: flex;
-	  flex-direction: column;
-	  align-items: center;
-	  justify-content: center;
-	  background: rgba(255, 255, 255, 0.9);
-	  z-index: 100;
+		position: absolute;
+		top: 0;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		background: rgba(255, 255, 255, 0.9);
+		z-index: 100;
 	}
-	
+
 	.loading-spinner {
-	  border: 4px solid rgba(37, 65, 252, 0.1);
-	  border-radius: 50%;
-	  border-top: 4px solid #2541fc;
-	  width: 40px;
-	  height: 40px;
-	  animation: spin 1s linear infinite;
+		border: 4px solid rgba(37, 65, 252, 0.1);
+		border-radius: 50%;
+		border-top: 4px solid #2541fc;
+		width: 40px;
+		height: 40px;
+		animation: spin 1s linear infinite;
 	}
-	
+
 	.loading-text {
-	  margin-top: 1rem;
-	  color: #2541fc;
-	  font-weight: 500;
+		margin-top: 1rem;
+		color: #2541fc;
+		font-weight: 500;
 	}
-	
-	/* Sections Common Styles */
-	.status-section,
-	.shifts-section,
-	.suggestions-section {
-	  background: white;
-	  border-radius: 12px;
-	  padding: 1.25rem;
-	  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
-	}
-	
+
 	/* Error Notification */
 	.error-notification {
-	  position: fixed;
-	  bottom: 1rem;
-	  left: 1rem;
-	  right: 1rem;
-	  background: #ff4444;
-	  color: white;
-	  padding: 1rem;
-	  border-radius: 8px;
-	  display: flex;
-	  align-items: center;
-	  gap: 0.75rem;
-	  z-index: 1000;
-	  animation: slideUp 0.3s ease;
-	  box-shadow: 0 4px 12px rgba(255, 68, 68, 0.3);
+		position: fixed;
+		bottom: 1rem;
+		left: 1rem;
+		right: 1rem;
+		background: #ff4444;
+		color: white;
+		padding: 1rem;
+		border-radius: 8px;
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		z-index: 1000;
+		animation: slideUp 0.3s ease;
+		box-shadow: 0 4px 12px rgba(255, 68, 68, 0.3);
 	}
-	
+
 	.error-icon {
-	  width: 24px;
-	  height: 24px;
-	  flex-shrink: 0;
+		width: 24px;
+		height: 24px;
+		flex-shrink: 0;
 	}
-	
+
 	/* Animations */
 	@keyframes spin {
-	  0% { transform: rotate(0deg); }
-	  100% { transform: rotate(360deg); }
+		0% {
+			transform: rotate(0deg);
+		}
+		100% {
+			transform: rotate(360deg);
+		}
 	}
-	
+
 	@keyframes slideUp {
-	  from { transform: translateY(100%); opacity: 0; }
-	  to { transform: translateY(0); opacity: 1; }
+		from {
+			transform: translateY(100%);
+			opacity: 0;
+		}
+		to {
+			transform: translateY(0);
+			opacity: 1;
+		}
 	}
-	
+
 	/* Responsive Adjustments */
 	@media (min-width: 768px) {
-	  .app-container {
-		padding: 0;
-	  }
-	  
-	  .main-content {
-		padding: 1.5rem;
-		max-width: 768px;
-		margin: 0 auto;
-	  }
-	  
-	  .map-section {
-		max-height: 65vh;
-	  }
-	  
-	  .error-notification {
-		left: 50%;
-		transform: translateX(-50%);
-		max-width: 80%;
-		width: max-content;
-	  }
+		.app-container {
+			padding: 0;
+		}
+
+		.main-content {
+			padding: 1.5rem;
+			max-width: 768px;
+			margin: 0 auto;
+		}
+
+		.map-section {
+			max-height: 65vh;
+		}
+
+		.error-notification {
+			left: 50%;
+			transform: translateX(-50%);
+			max-width: 80%;
+			width: max-content;
+		}
 	}
 </style>
