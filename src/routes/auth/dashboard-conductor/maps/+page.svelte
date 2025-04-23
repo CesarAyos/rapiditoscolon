@@ -5,6 +5,8 @@
 	import { supabase } from '../../../../components/supabase';
 	import Lock from '../../../../components/lock.svelte';
 	import type { Session } from '@supabase/supabase-js';
+	import { protegerRuta } from '../../../../components/protegerRuta';
+	
 
 	type Conductor = {
 		id: number;
@@ -62,6 +64,7 @@
 	otherDrivers.subscribe((value) => (drivers = value));
 
 	onMount(() => {
+		protegerRuta();
 		let updateInterval: NodeJS.Timeout;
 		let authSubscription: { unsubscribe: () => void } | null = null;
 		let realtimeSubscription: any = null;

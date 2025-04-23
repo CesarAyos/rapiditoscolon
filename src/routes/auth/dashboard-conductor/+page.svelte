@@ -4,6 +4,9 @@
 	import { supabase } from '../../../components/supabase';
 	import Lock from '../../../components/lock.svelte';
 	import type { Session, Subscription } from '@supabase/supabase-js';
+	import { protegerRuta } from '../../../components/protegerRuta';
+	
+	
 
 	type Conductor = {
 		id: number;
@@ -38,6 +41,7 @@
 	let currentSession: Session | null = null;
 
 	onMount(() => {
+		protegerRuta();
     let authListener: { subscription: Subscription } | null = null;
 
     // Usamos una IIFE async para manejar la lógica asíncrona

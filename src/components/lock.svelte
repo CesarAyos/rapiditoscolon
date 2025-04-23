@@ -10,7 +10,7 @@
 				.replace(/^ +/, '')
 				.replace(/=.*/, '=;expires=' + new Date().toUTCString() + ';path=/');
 		});
-		window.location.href = '/auth';
+		window.location.href = '/';
 	};
 </script>
 
