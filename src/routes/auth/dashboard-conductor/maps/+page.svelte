@@ -172,29 +172,36 @@
         }
     };
 
-    // Guardar posición en la base de datos (ahora con buffer)
     const savePosition = async (lat: number, lng: number, accuracy?: number) => {
-        if (!conductorData) {
-            console.error('No hay datos de conductor');
-            return;
-        }
+    if (!conductorData) {
+        console.error('No hay datos de conductor');
+        return;
+    }
 
-        const positionData: PosicionConductor = {
-            conductor_id: conductorData.id,
-            lat,
-            lng,
-            accuracy,
-            timestamp: new Date().toISOString()
-        };
-
-        // Agregar al buffer
-        positionBuffer.push(positionData);
-
-        // Si el buffer alcanza el límite, enviar inmediatamente
-        if (positionBuffer.length >= POSITION_BUFFER_LIMIT) {
-            await flushPositionBuffer();
-        }
+    const positionData: PosicionConductor = {
+        conductor_id: conductorData.id,
+        lat,
+        lng,
+        accuracy,
+        timestamp: new Date(Date.now() + Math.random() * 1000).toISOString() // Añadir pequeña variación en la hora
     };
+
+    try {
+        const { data, error: insertError } = await supabase
+            .from('conductor_posiciones')
+            .insert([positionData])
+            .select();
+
+        if (insertError) throw insertError;
+
+        console.log("Posición guardada en Supabase:", data);
+
+    } catch (err) {
+       
+    };
+};
+
+
 
     // Enviar posiciones en buffer a la base de datos
     // Enviar posiciones en buffer a la base de datos
@@ -271,88 +278,39 @@ const flushPositionBuffer = async () => {
 
     // Actualizar posición en el mapa
     const updatePosition = async (lat: number, lng: number, accuracy?: number) => {
-        if (!map || !conductorData || !L) {
-            console.error('Faltan dependencias para updatePosition');
-            return;
+    if (!map || !conductorData || !L) {
+        console.error('Faltan dependencias para updatePosition');
+        return;
+    }
+
+    console.log("Actualizando posición en el mapa...");
+
+    positions.push([lat, lng]);
+
+    if (positions.length > 1000) {
+        positions = positions.slice(-1000);
+    }
+
+    dibujarRutaActual();
+
+    if (!userMarker) {
+        userMarker = L.marker([lat, lng], { title: conductorData.nombre }).addTo(map);
+    } else {
+        userMarker.setLatLng([lat, lng]);
+    }
+
+    map.setView([lat, lng], map.getZoom());
+
+    if (accuracy) {
+        if (userMarker.accuracyCircle) {
+            map.removeLayer(userMarker.accuracyCircle);
         }
+        userMarker.accuracyCircle = L.circle([lat, lng], { radius: accuracy }).addTo(map);
+    }
 
-        try {
-            // Agregar la nueva posición al historial local
-            positions.push([lat, lng]);
+    await savePosition(lat, lng, accuracy);
+};
 
-            // Limitar a 1000 puntos para rendimiento
-            if (positions.length > 1000) {
-                positions = positions.slice(-1000);
-            }
-
-            // Crear o actualizar la polilínea
-            if (isTracking) {
-                dibujarRutaActual();
-            }
-
-            // Actualizar o crear marcador
-            if (!userMarker) {
-                userMarker = L.marker([lat, lng], {
-                    icon: L.divIcon({
-                        className: 'driver-marker',
-                        html: `
-                            <div style="position: relative;">
-                                <img src="https://cdn-icons-png.flaticon.com/512/4474/4474228.png" 
-                                     style="width: 32px; height: 32px;"/>
-                                <div style="position: absolute; 
-                                           top: -10px; 
-                                           left: 50%; 
-                                           transform: translateX(-50%);
-                                           background: white; 
-                                           border-radius: 50%; 
-                                           padding: 2px 5px;
-                                           border: 2px solid #3388ff;
-                                           font-weight: bold;
-                                           font-size: 12px;">
-                                    ${conductorData.control}
-                                </div>
-                            </div>
-                        `,
-                        iconSize: [32, 40],
-                        iconAnchor: [16, 40]
-                    }),
-                    zIndexOffset: 1000
-                })
-                    .addTo(map)
-                    .bindPopup(
-                        `<b>${conductorData.nombre}</b><br>Placa: ${conductorData.placa}<br>Control: ${conductorData.control}`
-                    );
-            } else {
-                userMarker.setLatLng([lat, lng]);
-            }
-
-            // Centrar mapa en la posición actual (pero no hacer zoom para no molestar al usuario)
-            map.setView([lat, lng], map.getZoom());
-
-            // Actualizar círculo de precisión
-            if (accuracy) {
-                if (userMarker.accuracyCircle) {
-                    map.removeLayer(userMarker.accuracyCircle);
-                }
-
-                userMarker.accuracyCircle = L.circle([lat, lng], {
-                    radius: accuracy,
-                    fillOpacity: 0.2,
-                    color: '#3388ff',
-                    fillColor: '#3388ff'
-                }).addTo(map);
-            }
-
-            // Guardar posición en la base de datos (ahora con buffer)
-            await savePosition(lat, lng, accuracy);
-
-            // Actualizar otros conductores
-            await getOtherDrivers();
-        } catch (err) {
-            console.error('Error en updatePosition:', err);
-            error.set(`Error al actualizar posición`);
-        }
-    };
 
     // Limpiar rutas antiguas (ejecutar periódicamente)
     const limpiarRutasAntiguas = async (dias: number = 7) => {
@@ -393,41 +351,38 @@ const flushPositionBuffer = async () => {
 
     // Iniciar seguimiento continuo
     const startTracking = () => {
-        if (!browser || !userInitiatedTracking) return;
+    if (!browser || !userInitiatedTracking) return;
 
-        // Limpiar la polilínea anterior al iniciar nuevo seguimiento
-        positions = [];
-        if (polyline) {
-            map.removeLayer(polyline);
-            polyline = null;
-        }
+    positions = [];
+    if (polyline) {
+        map.removeLayer(polyline);
+        polyline = null;
+    }
 
-        if (navigator.geolocation) {
-            watchId = navigator.geolocation.watchPosition(
-                (position) => {
-                    updatePosition(
-                        position.coords.latitude,
-                        position.coords.longitude,
-                        position.coords.accuracy
-                    );
-                },
-                (err) => {
-                    console.error('Error en watchPosition:', err);
-                    error.set('Error en seguimiento: ' + err.message);
-                    stopTracking();
-                },
-                {
-                    enableHighAccuracy: true,
-                    maximumAge: 10000,
-                    timeout: 15000
-                }
-            );
-            trackingActive.set(true);
-            console.log('Seguimiento GPS activado');
-        } else {
-            error.set('Geolocalización no soportada por este navegador');
-        }
-    };
+    if (navigator.geolocation) {
+        watchId = navigator.geolocation.watchPosition(
+            (position) => {
+                console.log("Nueva posición detectada:", position.coords);
+                updatePosition(position.coords.latitude, position.coords.longitude, position.coords.accuracy);
+            },
+            (err) => {
+                console.error('Error en seguimiento:', err);
+                error.set('Error en seguimiento: ' + err.message);
+                stopTracking();
+            },
+            {
+                enableHighAccuracy: true,
+                maximumAge: 500,  // Solo guarda posiciones frescas (medio segundo de antigüedad máx.)
+                timeout: 5000     // Ajusta el tiempo de espera para que no tarde en obtener datos
+            }
+        );
+        trackingActive.set(true);
+        console.log('Seguimiento GPS activado');
+    } else {
+        error.set('Geolocalización no soportada por este navegador');
+    }
+};
+
 
     // Habilitar seguimiento
     const enableTracking = () => {
