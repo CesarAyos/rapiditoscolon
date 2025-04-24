@@ -8,6 +8,8 @@
 	import Turnosasignados from '../../components/turnosasignados.svelte';
 	import Turnos from '../../components/turnos.svelte';
 	import ProtectedArea from '../../components/ProtectedArea.svelte';
+	import Comentarios from '../../components/comentarios.svelte';
+	
 	
 	
 
@@ -65,6 +67,18 @@
 				</div>
 				<div class="card-body">
 					<Carreras />
+				</div>
+			</div>
+		</div>
+
+
+		<div class="col-lg-6">
+			<div class="card h-100 shadow-sm">
+				<div class="card-header bg-primary text-white">
+					<h3 class="h5 mb-0">Quejas o sugerencias</h3>
+				</div>
+				<div class="card-body">
+					<Comentarios />
 				</div>
 			</div>
 		</div>
