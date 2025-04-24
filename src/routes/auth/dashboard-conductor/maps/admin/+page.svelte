@@ -1,48 +1,68 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import { writable } from 'svelte/store';
+	import { writable, get } from 'svelte/store';
 	import { browser } from '$app/environment';
 	import { supabase } from '../../../../../components/supabase';
-	import Lock from '../../../../../components/lock.svelte';
 	import type { Session } from '@supabase/supabase-js';
 	import { protegerRuta } from '../../../../../components/protegerRuta';
 	import ProtectedArea from '../../../../../components/ProtectedArea.svelte';
+	import Lock from '../../../../../components/lock.svelte';
 
+	// Type Definitions
 	type Conductor = {
 		id: number;
 		nombre: string;
 		placa: string;
-		email: string;
+		email?: string;
 		control: string;
 		propiedad: string;
 		telefono?: string | null;
 	};
 
-	type PosicionConductor = {
-		id?: number;
+	type Position = {
+		lat: number;
+		lng: number;
+		timestamp: string;
+		accuracy?: number;
+	};
+
+	type DriverWithRoute = Conductor & {
+		route: Position[];
+		lastPosition?: Position;
+	};
+
+	interface RouteLayer {
+		layer: any;
+		driverId: number;
+	}
+
+	// Supabase Response Types
+	type SupabaseConductor = {
+		id: number;
+		nombre: string;
+		placa: string;
+		email?: string | null;
+		control: string;
+		propiedad: string;
+		telefono?: string | null;
+	};
+
+	type SupabasePositionResponse = {
 		conductor_id: number;
 		lat: number;
 		lng: number;
-		accuracy?: number;
+		accuracy?: number | null;
 		timestamp: string;
+		conductor: SupabaseConductor;
 	};
 
 	// Stores
 	const error = writable<string>('');
 	const isLoading = writable<boolean>(false);
 	const session = writable<Session | null>(null);
-	const drivers = writable<
-		(Conductor & {
-			lastPosition?: {
-				lat: number;
-				lng: number;
-				timestamp: string;
-				accuracy?: number;
-			};
-		})[]
-	>([]);
+	const drivers = writable<DriverWithRoute[]>([]);
 
-	// Variables reactivas
+	// Component Variables
 	let errorMessage: string = '';
 	let loading: boolean = false;
 	let currentSession: Session | null = null;
@@ -52,8 +72,9 @@
 	let L: any = null;
 	let updateInterval: NodeJS.Timeout;
 	let realtimeSubscription: any = null;
+	let routeLayers: RouteLayer[] = [];
 
-	// Suscripciones
+	// Store Subscriptions
 	error.subscribe((value) => (errorMessage = value));
 	isLoading.subscribe((value) => (loading = value));
 	session.subscribe((value) => (currentSession = value));
@@ -67,31 +88,24 @@
 		};
 	});
 
+	// Main Functions
 	const initialize = async () => {
 		try {
-			console.log('Inicializando componente de monitoreo...');
 			await getSession();
 			await initMap();
-			await getAllActiveDrivers();
-
-			// Configurar suscripciones a cambios en tiempo real
+			await getAllDriverRoutes();
 			const { realtimeSub } = await setupSubscriptions();
 			realtimeSubscription = realtimeSub;
 
-			// Intervalo de actualización (30 segundos)
 			updateInterval = setInterval(async () => {
-				try {
-					await getAllActiveDrivers();
-				} catch (error) {
-					console.error('Error en intervalo de actualización:', error);
-				}
+				await getAllDriverRoutes();
 			}, 30000);
-		} catch (error) {
-			console.error('Error en inicialización:', error);
+		} catch (err) {
+			console.error('Initialization error:', err);
+			error.set('Initialization failed');
 		}
 	};
 
-	// Inicializar mapa
 	const initMap = async (): Promise<boolean> => {
 		if (!browser || !mapContainer) return false;
 
@@ -101,7 +115,6 @@
 			await import('leaflet/dist/leaflet.css');
 
 			if (!map) {
-				// Vista inicial centrada en Colombia
 				map = L.map(mapContainer).setView([8.038108198602036, -72.25370800354843], 8);
 				L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 					attribution: '&copy; OpenStreetMap contributors'
@@ -110,84 +123,158 @@
 			}
 			return true;
 		} catch (err) {
-			console.error('Error al inicializar mapa:', err);
-			error.set('Error al cargar el mapa');
+			console.error('Map initialization error:', err);
+			error.set('Error loading map');
 			return false;
 		}
 	};
 
-	// Obtener todos los conductores activos (con posiciones recientes)
-	const getAllActiveDrivers = async () => {
+	const getAllDriverRoutes = async () => {
 		if (!browser || !L || !map) return;
 
 		try {
-			// Obtener posiciones de los últimos 15 minutos
-			const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+			const session = await verifySession();
+			if (!session) {
+				error.set('Sesión inválida, por favor vuelve a iniciar sesión.');
+				return;
+			}
+
+			const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
 			const { data, error: sbError } = await supabase
 				.from('conductor_posiciones')
 				.select(
 					`
-        conductor_id,
-        lat,
-        lng,
-        accuracy,
-        timestamp,
-        conductor!fk_conductor(id, nombre, placa, control, propiedad, telefono)
-    `
+                conductor_id,
+                lat,
+                lng,
+                accuracy,
+                timestamp,
+                conductor:conductor_id (
+                    id, 
+                    nombre, 
+                    placa, 
+                    email, 
+                    control, 
+                    propiedad, 
+                    telefono
+                )
+            `
 				)
-				.order('timestamp', { ascending: false });
-
-			console.log('Datos sin filtro de tiempo:', data);
+				.gt('timestamp', oneDayAgo)
+				.order('timestamp', { ascending: true });
 
 			if (sbError) throw sbError;
-			if (!data) return;
+			if (!data || !Array.isArray(data)) return;
 
-			// Agrupar por conductor_id y tomar la más reciente de cada uno
-			const latestPositions = data.reduce((acc: any[], current) => {
-				const existing = acc.find((item) => item.conductor_id === current.conductor_id);
-				if (!existing) {
-					acc.push(current);
-				}
-				return acc;
-			}, []);
+			const typedData = data.map((entry) => ({
+				...entry,
+				conductor: Array.isArray(entry.conductor) ? entry.conductor[0] : entry.conductor
+			})) as SupabasePositionResponse[];
 
-			// Actualizar la lista de conductores
-			console.log('Posiciones más recientes antes de actualizar el store:', latestPositions);
+			const groupedRoutes = typedData.reduce<
+				Record<number, { conductor: Conductor; route: Position[] }>
+			>(
+				(acc, current) => {
+					const conductorData: Conductor = {
+						id: current.conductor.id,
+						nombre: current.conductor.nombre,
+						placa: current.conductor.placa,
+						email: current.conductor.email || undefined,
+						control: current.conductor.control,
+						propiedad: current.conductor.propiedad,
+						telefono: current.conductor.telefono || null
+					};
 
-			drivers.set(
-				latestPositions.map((item) => ({
-					...item.conductor,
-					lastPosition: {
-						lat: item.lat,
-						lng: item.lng,
-						accuracy: item.accuracy,
-						timestamp: item.timestamp
+					if (!acc[current.conductor_id]) {
+						acc[current.conductor_id] = {
+							conductor: conductorData,
+							route: []
+						};
 					}
-				}))
+
+					acc[current.conductor_id].route.push({
+						lat: current.lat,
+						lng: current.lng,
+						timestamp: current.timestamp,
+						accuracy: current.accuracy ?? undefined
+					});
+
+					return acc;
+				},
+				{} as Record<number, { conductor: Conductor; route: Position[] }>
 			);
 
-			console.log('Conductores actualizados en el store:', $drivers); // Verificar el estado del store
+			const formattedDrivers = Object.values(groupedRoutes).map((driver) => ({
+				...driver.conductor,
+				route: driver.route,
+				lastPosition: driver.route[driver.route.length - 1]
+			}));
+
+			drivers.set(formattedDrivers);
+			drawRoutes(formattedDrivers);
 		} catch (err) {
-			console.error('Error en getAllActiveDrivers:', err);
-			error.set('Error al cargar conductores activos');
+			console.error('Error loading routes:', err);
+			error.set('Error loading trajectories');
 		}
 	};
 
-	// Actualizar marcadores en el mapa
-	const updateMarkers = (driversList: (Conductor & { lastPosition?: any })[]) => {
-		console.log('Llamando updateMarkers con:', driversList);
+	const drawRoutes = (driversList: DriverWithRoute[]) => {
 		if (!map || typeof L === 'undefined') return;
 
-		if (driversList.length === 0) {
-			console.warn('No hay conductores para mostrar en el mapa.');
-			return;
+		// Clear previous routes
+		routeLayers.forEach((layer) => map.removeLayer(layer.layer));
+		routeLayers = [];
+
+		driversList.forEach((driver: DriverWithRoute) => {
+			if (!driver.route || driver.route.length < 2) return;
+
+			const polyline = L.polyline(
+				driver.route.map((pos) => [pos.lat, pos.lng]),
+				{
+					color: 'blue',
+					weight: 4,
+					opacity: 0.7
+				}
+			).addTo(map);
+
+			routeLayers.push({
+				layer: polyline,
+				driverId: driver.id
+			});
+		});
+	};
+
+	const verifySession = async () => {
+		const { data, error } = await supabase.auth.getSession();
+
+		if (error || !data.session) {
+			console.warn('Sesión inválida o expirada, forzando re-autenticación...');
+			await supabase.auth.signOut();
+			return null;
 		}
 
-		// Asegurar que 'markers' está inicializado
+		try {
+			const { data: refreshedData, error: refreshError } = await supabase.auth.refreshSession();
+			if (refreshError) {
+				console.error('Error al refrescar sesión:', refreshError);
+				await supabase.auth.signOut(); // Si falla, cerrar sesión y forzar nuevo login
+				return null;
+			}
+
+			return refreshedData.session;
+		} catch (err) {
+			console.error('Excepción al verificar sesión:', err);
+			return null;
+		}
+	};
+
+	const updateMarkers = (driversList: DriverWithRoute[]) => {
+		if (!map || typeof L === 'undefined') return;
+
 		if (!markers) markers = {};
 
-		// Limpiar marcadores de conductores que ya no están activos
+		// Limpiar conductores inactivos
 		Object.keys(markers).forEach((id) => {
 			const driverId = parseInt(id);
 			if (!driversList.some((d) => d.id === driverId)) {
@@ -196,7 +283,7 @@
 			}
 		});
 
-		// Actualizar o crear marcadores para cada conductor activo
+		// Actualizar o crear puntos en el mapa
 		driversList.forEach((driver) => {
 			if (!driver?.lastPosition) return;
 
@@ -204,70 +291,30 @@
 			const marker = markers[driver.id];
 
 			if (marker) {
-				// Actualizar posición existente
 				marker.setLatLng(position);
-
-				// Actualizar popup con información actualizada
-				marker.setPopupContent(
-					`<b>${driver.nombre}</b><br>
-                 Placa: ${driver.placa}<br>
-                 Control: ${driver.control}<br>
-                 Última actualización: ${new Date(driver.lastPosition.timestamp).toLocaleTimeString()}`
-				);
+				marker.setPopupContent(`
+                <b>${driver.nombre}</b><br>
+                Placa: ${driver.placa}<br>
+                Control: ${driver.control}<br>
+                Updated: ${new Date(driver.lastPosition.timestamp).toLocaleTimeString()}
+            `);
 			} else {
-				// Crear nuevo marcador
-				markers[driver.id] = L.marker(position, {
-					icon: L.divIcon({
-						html: `
-                        <div style="position: relative;">
-                            <img src="https://cdn-icons-png.flaticon.com/512/477/477103.png" 
-                                 style="width: 32px; height: 32px;"/>
-                            <div style="position: absolute; 
-                                       top: -10px; 
-                                       left: 50%; 
-                                       transform: translateX(-50%);
-                                       background: white; 
-                                       border-radius: 50%; 
-                                       padding: 2px 5px;
-                                       border: 2px solid #666666;
-                                       font-weight: bold;
-                                       font-size: 12px;">
-                                ${driver.control}
-                            </div>
-                        </div>
-                    `,
-						iconSize: [32, 40],
-						iconAnchor: [16, 40]
-					}),
-					title: driver.nombre
-				})
-					.addTo(map)
-					.bindPopup(
-						`<b>${driver.nombre}</b><br>
-                 Placa: ${driver.placa}<br>
-                 Control: ${driver.control}<br>
-                 Última actualización: ${new Date(driver.lastPosition.timestamp).toLocaleTimeString()}`
-					);
-
-				// Añadir círculo de precisión si está disponible
-				if (driver.lastPosition.accuracy) {
-					L.circle(position, {
-						radius: driver.lastPosition.accuracy,
-						fillOpacity: 0.2,
-						color: '#3388ff',
-						fillColor: '#3388ff'
-					}).addTo(map);
-				}
+				markers[driver.id] = L.circleMarker(position, {
+					radius: 6, // Tamaño del punto
+					fillColor: 'blue', // Color del punto
+					color: 'white', // Contorno del punto
+					weight: 1,
+					fillOpacity: 0.9
+				}).addTo(map).bindPopup(`
+                <b>${driver.nombre}</b><br>
+                Placa: ${driver.placa}<br>
+                Control: ${driver.control}<br>
+                Updated: ${new Date(driver.lastPosition.timestamp).toLocaleTimeString()}
+            `);
 			}
 		});
 	};
 
-	drivers.subscribe((driversList) => {
-		console.log('Nuevo estado de conductores:', driversList);
-		updateMarkers(driversList);
-	});
-
-	// Obtener sesión actual
 	const getSession = async (): Promise<Session | null> => {
 		try {
 			const { data, error } = await supabase.auth.getSession();
@@ -275,12 +322,11 @@
 			session.set(data.session);
 			return data.session;
 		} catch (err) {
-			console.error('Error en getSession:', err);
+			console.error('Session error:', err);
 			return null;
 		}
 	};
 
-	// Configurar suscripciones a cambios en tiempo real
 	const setupSubscriptions = async () => {
 		try {
 			const positionsChannel = supabase
@@ -293,22 +339,38 @@
 						table: 'conductor_posiciones'
 					},
 					async (payload) => {
-						console.log('Nueva posición en tiempo real recibida:', payload.new);
+						const currentDrivers = get(drivers);
+						const updatedDrivers = [...currentDrivers];
+						const driverIndex = updatedDrivers.findIndex((d) => d.id === payload.new.conductor_id);
+
+						if (driverIndex >= 0) {
+							const newPosition: Position = {
+								lat: payload.new.lat,
+								lng: payload.new.lng,
+								timestamp: payload.new.timestamp,
+								accuracy: payload.new.accuracy
+							};
+
+							updatedDrivers[driverIndex].route.push(newPosition);
+							updatedDrivers[driverIndex].lastPosition = newPosition;
+
+							drivers.set(updatedDrivers);
+							drawRoutes(updatedDrivers);
+						} else {
+							await getAllDriverRoutes();
+						}
 					}
 				)
 				.subscribe();
 
-			console.log('Suscripción configurada correctamente.');
-			return { realtimeSub: positionsChannel }; // Devuelve un objeto con `realtimeSub`
+			return { realtimeSub: positionsChannel };
 		} catch (error) {
-			console.error('Error en setupSubscriptions:', error);
-			return { realtimeSub: null }; // Devuelve `{ realtimeSub: null }` en caso de error
+			console.error('Subscription error:', error);
+			return { realtimeSub: null };
 		}
 	};
 
-	// Limpieza
 	const cleanup = () => {
-		console.log('Limpiando componente de monitoreo...');
 		clearInterval(updateInterval);
 
 		if (realtimeSubscription) {
@@ -319,11 +381,19 @@
 			map.remove();
 			map = null;
 		}
+
+		routeLayers = [];
+		markers = {};
 	};
 
 	onDestroy(() => {
 		if (!browser) return;
 		cleanup();
+	});
+
+	// Subscribe to drivers changes
+	drivers.subscribe((driversList) => {
+		updateMarkers(driversList);
 	});
 </script>
 
@@ -332,7 +402,11 @@
 		<Lock />
 	</div>
 	<div>
-		<button on:click={() => window.location.reload()} class="btn btn-success" title="Recargar la página">
+		<button
+			on:click={() => window.location.reload()}
+			class="btn btn-success"
+			title="Recargar la página"
+		>
 			🔄 Recargar Mapa
 		</button>
 	</div>
