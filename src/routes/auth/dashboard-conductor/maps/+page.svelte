@@ -173,17 +173,14 @@
     };
 
     const savePosition = async (lat: number, lng: number, accuracy?: number) => {
-    if (!conductorData) {
-        console.error('No hay datos de conductor');
-        return;
-    }
+    console.log("Guardando en Supabase:", { lat, lng, timestamp: new Date().toISOString() });
 
     const positionData: PosicionConductor = {
-        conductor_id: conductorData.id,
+        conductor_id: conductorData?.id ?? 0,
         lat,
         lng,
         accuracy,
-        timestamp: new Date(Date.now() + Math.random() * 1000).toISOString() // Añadir pequeña variación en la hora
+        timestamp: new Date().toISOString()
     };
 
     try {
@@ -197,9 +194,10 @@
         console.log("Posición guardada en Supabase:", data);
 
     } catch (err) {
-       
-    };
+        console.error('Error al guardar la posición:', err);
+    }
 };
+
 
 
 
@@ -361,21 +359,21 @@ const flushPositionBuffer = async () => {
 
     if (navigator.geolocation) {
         watchId = navigator.geolocation.watchPosition(
-            (position) => {
-                console.log("Nueva posición detectada:", position.coords);
-                updatePosition(position.coords.latitude, position.coords.longitude, position.coords.accuracy);
-            },
-            (err) => {
-                console.error('Error en seguimiento:', err);
-                error.set('Error en seguimiento: ' + err.message);
-                stopTracking();
-            },
-            {
-                enableHighAccuracy: true,
-                maximumAge: 500,  // Solo guarda posiciones frescas (medio segundo de antigüedad máx.)
-                timeout: 5000     // Ajusta el tiempo de espera para que no tarde en obtener datos
-            }
-        );
+    (position) => {
+        console.log("Nueva posición detectada:", position.coords);
+        updatePosition(position.coords.latitude, position.coords.longitude, position.coords.accuracy);
+    },
+    (err) => {
+        console.error('Error en seguimiento:', err);
+        stopTracking();
+    },
+    {
+        enableHighAccuracy: true,
+        maximumAge: 500,  
+        timeout: 5000  
+    }
+);
+
         trackingActive.set(true);
         console.log('Seguimiento GPS activado');
     } else {
