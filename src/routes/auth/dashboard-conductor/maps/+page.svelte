@@ -1,444 +1,454 @@
 <script lang="ts">
-    import { onMount, onDestroy } from 'svelte';
-    import { writable } from 'svelte/store';
-    import { browser } from '$app/environment';
-    import { supabase } from '../../../../components/supabase';
-    import Lock from '../../../../components/lock.svelte';
-    import type { Session } from '@supabase/supabase-js';
-    import { protegerRuta } from '../../../../components/protegerRuta';
-    
-
-    type Conductor = {
-        id: number;
-        nombre: string;
-        placa: string;
-        email: string;
-        control: string;
-        propiedad: string;
-        telefono?: string | null;
-    };
-
-    type PosicionConductor = {
-        id?: number;
-        conductor_id: number;
-        lat: number;
-        lng: number;
-        accuracy?: number;
-        timestamp: string;
-    };
-
-    // Stores
-    const conductor = writable<Conductor | null>(null);
-    const error = writable<string>('');
-    const isLoading = writable<boolean>(false);
-    const session = writable<Session | null>(null);
-    const trackingActive = writable<boolean>(false);
-    const positionHistory = writable<PosicionConductor[]>([]);
-    const otherDrivers = writable<(Conductor & { lastPosition?: { lat: number; lng: number; timestamp: string } })[]>([]);
-
-    // Variables reactivas
-    let conductorData: Conductor | null = null;
-    let errorMessage: string = '';
-    let loading: boolean = false;
-    let currentSession: Session | null = null;
-    let map: any = null;
-    let userMarker: any = null;
-    let otherMarkers: Record<number, any> = {};
-    let mapContainer: HTMLDivElement;
-    let watchId: number | null = null;
-    let isTracking = false;
-    let drivers: (Conductor & { lastPosition?: { lat: number; lng: number; timestamp: string } })[] = [];
-    let history: PosicionConductor[] = [];
-    let L: any = null;
-    let userInitiatedTracking = false;
-    let polyline: any = null;
-    let positions: [number, number][] = [];
-    let positionBuffer: PosicionConductor[] = [];
-    const POSITION_BUFFER_LIMIT = 10; // Número de posiciones a acumular antes de enviar
-
-    // Suscripciones
-    conductor.subscribe((value) => (conductorData = value));
-    error.subscribe((value) => (errorMessage = value));
-    isLoading.subscribe((value) => (loading = value));
-    session.subscribe((value) => (currentSession = value));
-    trackingActive.subscribe((value) => (isTracking = value));
-    positionHistory.subscribe((value) => (history = value));
-    otherDrivers.subscribe((value) => (drivers = value));
-
-    onMount(() => {
-        protegerRuta();
-        let updateInterval: NodeJS.Timeout;
-        let authSubscription: { unsubscribe: () => void } | null = null;
-        let realtimeSubscription: any = null;
-        let bufferFlushInterval: NodeJS.Timeout;
-
-        const initialize = async () => {
-            try {
-                console.log('Inicializando componente...');
-                await getSession();
-                await new Promise((resolve) => setTimeout(resolve, 50));
-                await obtenerConductor();
-                await initMap();
-
-                // Cargar estado del seguimiento
-                const savedTrackingState = loadTrackingState();
-                if (savedTrackingState) {
-                    userInitiatedTracking = true;
-                    startTracking();
-                }
-
-                // Cargar historial de rutas si existe
-                if (conductorData) {
-                    const historial = await obtenerHistorialRuta(conductorData.id);
-                    positionHistory.set(historial);
-                    
-                    // Dibujar ruta histórica
-                    if (historial.length > 0) {
-                        positions = historial.map(pos => [pos.lat, pos.lng]);
-                        dibujarRutaActual();
-                    }
-                }
-
-                const subscriptions = await setupSubscriptions();
-                authSubscription = subscriptions.authSubscription;
-                realtimeSubscription = subscriptions.realtimeSubscription;
-
-                if (conductorData) {
-                    getCurrentPosition();
-                    await getOtherDrivers();
-                }
-
-                // Intervalo para enviar posiciones en buffer
-                bufferFlushInterval = setInterval(flushPositionBuffer, 15000); // Enviar cada 15 segundos
-
-                // Intervalo de actualización de otros conductores (10 segundos)
-                updateInterval = setInterval(async () => {
-                    try {
-                        await getOtherDrivers();
-                    } catch (error) {
-                        console.error('Error en intervalo de actualización:', error);
-                    }
-                }, 10000);
-            } catch (error) {
-                console.error('Error en inicialización:', error);
-            }
-        };
-
-        initialize();
-
-        return () => {
-            console.log('Limpiando componente...');
-            clearInterval(updateInterval);
-            clearInterval(bufferFlushInterval);
-            stopTracking();
-            flushPositionBuffer(); // Enviar cualquier posición pendiente
-
-            if (authSubscription) {
-                authSubscription.unsubscribe();
-            }
-
-            if (realtimeSubscription) {
-                supabase.removeChannel(realtimeSubscription);
-            }
-
-            if (map) {
-                map.remove();
-                map = null;
-            }
-        };
-    });
-
-    // Inicializar mapa
-    const initMap = async (): Promise<boolean> => {
-        if (!browser || !mapContainer) return false;
-
-        try {
-            const leaflet = await import('leaflet');
-            L = leaflet.default;
-            await import('leaflet/dist/leaflet.css');
-
-            if (!map) {
-                map = L.map(mapContainer).setView([7.8939, -72.5078], 13);
-                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                    attribution: '&copy; OpenStreetMap contributors'
-                }).addTo(map);
-                setTimeout(() => map.invalidateSize(), 100);
-            }
-            return true;
-        } catch (err) {
-            console.error('Error al inicializar mapa:', err);
-            error.set('Error al cargar el mapa');
-            return false;
-        }
-    };
-
-    const savePosition = async (lat: number, lng: number, accuracy?: number) => {
-    console.log("Guardando en Supabase:", { lat, lng, timestamp: new Date().toISOString() });
-
-    const positionData: PosicionConductor = {
-        conductor_id: conductorData?.id ?? 0,
-        lat,
-        lng,
-        accuracy,
-        timestamp: new Date().toISOString()
-    };
-
-    try {
-        const { data, error: insertError } = await supabase
-            .from('conductor_posiciones')
-            .insert([positionData])
-            .select();
-
-        if (insertError) throw insertError;
-
-        console.log("Posición guardada en Supabase:", data);
-
-    } catch (err) {
-        console.error('Error al guardar la posición:', err);
-    }
-};
-
-
-
-
-    // Enviar posiciones en buffer a la base de datos
-    // Enviar posiciones en buffer a la base de datos
-const flushPositionBuffer = async () => {
-    if (positionBuffer.length === 0 || !conductorData) return;
-
-    // Declarar positionsToSend fuera del try-catch para que sea accesible en ambos bloques
-    let positionsToSend: PosicionConductor[] = [];
-    
-    try {
-        positionsToSend = [...positionBuffer];
-        positionBuffer = []; // Limpiar buffer
-
-        const { data, error: insertError } = await supabase
-            .from('conductor_posiciones')
-            .insert(positionsToSend)
-            .select();
-
-        if (insertError) throw insertError;
-
-        // Actualizar historial local
-        if (data) {
-            positionHistory.update(history => [...history, ...data as PosicionConductor[]]);
-        }
-
-        return data;
-    } catch (err) {
-        console.error('Error al enviar posiciones en buffer:', err);
-        // Reintentar en el próximo intervalo si falla
-        positionBuffer = [...positionsToSend, ...positionBuffer];
-        throw err;
-    }
-};
-
-    // Obtener historial de rutas para un conductor
-    const obtenerHistorialRuta = async (conductorId: number): Promise<PosicionConductor[]> => {
-        try {
-            const { data, error } = await supabase
-                .from('conductor_posiciones')
-                .select('*')
-                .eq('conductor_id', conductorId)
-                .order('timestamp', { ascending: true });
-
-            if (error) throw error;
-            return data as PosicionConductor[];
-        } catch (err) {
-            console.error('Error al obtener historial de ruta:', err);
-            return [];
-        }
-    };
-
-    // Dibujar la ruta actual en el mapa
-    const dibujarRutaActual = () => {
-        if (!map || !L || positions.length === 0) return;
-
-        // Limpiar polilínea anterior
-        if (polyline) {
-            map.removeLayer(polyline);
-        }
-
-        // Crear nueva polilínea
-        polyline = L.polyline(positions, {
-            color: '#3388ff',
-            weight: 5,
-            opacity: 0.7,
-            dashArray: '10, 10'
-        }).addTo(map);
-
-        // Ajustar vista para mostrar toda la ruta
-        if (positions.length > 1) {
-            map.fitBounds(polyline.getBounds());
-        }
-    };
-
-    // Actualizar posición en el mapa
-    const updatePosition = async (lat: number, lng: number, accuracy?: number) => {
-    if (!map || !conductorData || !L) {
-        console.error('Faltan dependencias para updatePosition');
-        return;
-    }
-
-    console.log("Actualizando posición en el mapa...");
-
-    positions.push([lat, lng]);
-
-    if (positions.length > 1000) {
-        positions = positions.slice(-1000);
-    }
-
-    dibujarRutaActual();
-
-    if (!userMarker) {
-        userMarker = L.marker([lat, lng], { title: conductorData.nombre }).addTo(map);
-    } else {
-        userMarker.setLatLng([lat, lng]);
-    }
-
-    map.setView([lat, lng], map.getZoom());
-
-    if (accuracy) {
-        if (userMarker.accuracyCircle) {
-            map.removeLayer(userMarker.accuracyCircle);
-        }
-        userMarker.accuracyCircle = L.circle([lat, lng], { radius: accuracy }).addTo(map);
-    }
-
-    await savePosition(lat, lng, accuracy);
-};
-
-
-    // Limpiar rutas antiguas (ejecutar periódicamente)
-    const limpiarRutasAntiguas = async (dias: number = 7) => {
-        const fechaLimite = new Date();
-        fechaLimite.setDate(fechaLimite.getDate() - dias);
-        
-        const { error } = await supabase
-            .from('conductor_posiciones')
-            .delete()
-            .lt('timestamp', fechaLimite.toISOString());
-
-        if (error) console.error('Error limpiando rutas antiguas:', error);
-    };
-
-    // Obtener posición actual
-    const getCurrentPosition = () => {
-        if (!browser || !userInitiatedTracking) return;
-
-        if (navigator.geolocation) {
-            navigator.geolocation.getCurrentPosition(
-                (position) => {
-                    updatePosition(
-                        position.coords.latitude,
-                        position.coords.longitude,
-                        position.coords.accuracy
-                    );
-                },
-                (err) => {
-                    console.error('Error en getCurrentPosition:', err);
-                    error.set('Error obteniendo ubicación: ' + err.message);
-                },
-                { enableHighAccuracy: true, timeout: 10000 }
-            );
-        } else {
-            error.set('Geolocalización no soportada por este navegador');
-        }
-    };
-
-    // Iniciar seguimiento continuo
-    const startTracking = () => {
-    if (!browser || !userInitiatedTracking) return;
-
-    positions = [];
-    if (polyline) {
-        map.removeLayer(polyline);
-        polyline = null;
-    }
-
-    if (navigator.geolocation) {
-        watchId = navigator.geolocation.watchPosition(
-    (position) => {
-        console.log("Nueva posición detectada:", position.coords);
-        updatePosition(position.coords.latitude, position.coords.longitude, position.coords.accuracy);
-    },
-    (err) => {
-        console.error('Error en seguimiento:', err);
-        stopTracking();
-    },
-    {
-        enableHighAccuracy: true,
-        maximumAge: 500,  
-        timeout: 5000  
-    }
-);
-
-        trackingActive.set(true);
-        console.log('Seguimiento GPS activado');
-    } else {
-        error.set('Geolocalización no soportada por este navegador');
-    }
-};
-
-
-    // Habilitar seguimiento
-    const enableTracking = () => {
-        userInitiatedTracking = true;
-
-        if (isTracking) {
-            stopTracking();
-            saveTrackingState(false);
-        } else {
-            startTracking();
-            saveTrackingState(true);
-        }
-    };
-
-    // Detener seguimiento
-    const stopTracking = () => {
-        if (!browser) return;
-
-        if (watchId !== null) {
-            navigator.geolocation.clearWatch(watchId);
-            watchId = null;
-        }
-        trackingActive.set(false);
-        saveTrackingState(false);
-        console.log('Seguimiento GPS detenido');
-    };
-
-    // Guardar estado en localStorage
-    const saveTrackingState = (isActive: boolean) => {
-        if (browser) {
-            localStorage.setItem('trackingActive', JSON.stringify(isActive));
-        }
-    };
-
-    // Leer estado desde localStorage
-    const loadTrackingState = (): boolean => {
-        if (browser) {
-            const saved = localStorage.getItem('trackingActive');
-            return saved ? JSON.parse(saved) : false;
-        }
-        return false;
-    };
-
-    // Función auxiliar para actualizar marcadores de otros conductores
-    const updateOtherDriverMarker = (driverId: number, lat: number, lng: number, driverData: Conductor) => {
-        if (!map || !L) return;
-
-        const marker = otherMarkers[driverId];
-        const position = [lat, lng];
-        
-        if (marker) {
-            // Actualizar posición existente con animación
-            marker.setLatLng(position);
-        } else {
-            // Crear nuevo marcador
-            otherMarkers[driverId] = L.marker(position, {
-                icon: L.divIcon({
-                    html: `
+	import { onMount, onDestroy } from 'svelte';
+	import { writable } from 'svelte/store';
+	import { browser } from '$app/environment';
+	import { supabase } from '../../../../components/supabase';
+	import Lock from '../../../../components/lock.svelte';
+	import type { Session } from '@supabase/supabase-js';
+	import { protegerRuta } from '../../../../components/protegerRuta';
+
+	type Conductor = {
+		id: number;
+		nombre: string;
+		placa: string;
+		email: string;
+		control: string;
+		propiedad: string;
+		telefono?: string | null;
+	};
+
+	type PosicionConductor = {
+		id?: number;
+		conductor_id: number;
+		lat: number;
+		lng: number;
+		accuracy?: number;
+		timestamp: string;
+	};
+
+	// Stores
+	const conductor = writable<Conductor | null>(null);
+	const error = writable<string>('');
+	const isLoading = writable<boolean>(false);
+	const session = writable<Session | null>(null);
+	const trackingActive = writable<boolean>(false);
+	const positionHistory = writable<PosicionConductor[]>([]);
+	const otherDrivers = writable<
+		(Conductor & { lastPosition?: { lat: number; lng: number; timestamp: string } })[]
+	>([]);
+
+	// Variables reactivas
+	let conductorData: Conductor | null = null;
+	let errorMessage: string = '';
+	let loading: boolean = false;
+	let currentSession: Session | null = null;
+	let map: any = null;
+	let userMarker: any = null;
+	let otherMarkers: Record<number, any> = {};
+	let mapContainer: HTMLDivElement;
+	let watchId: number | null = null;
+	let isTracking = false;
+	let drivers: (Conductor & { lastPosition?: { lat: number; lng: number; timestamp: string } })[] =
+		[];
+	let history: PosicionConductor[] = [];
+	let L: any = null;
+	let userInitiatedTracking = false;
+	let polyline: any = null;
+	let positions: [number, number][] = [];
+	let positionBuffer: PosicionConductor[] = [];
+	const POSITION_BUFFER_LIMIT = 10; // Número de posiciones a acumular antes de enviar
+
+	// Suscripciones
+	conductor.subscribe((value) => (conductorData = value));
+	error.subscribe((value) => (errorMessage = value));
+	isLoading.subscribe((value) => (loading = value));
+	session.subscribe((value) => (currentSession = value));
+	trackingActive.subscribe((value) => (isTracking = value));
+	positionHistory.subscribe((value) => (history = value));
+	otherDrivers.subscribe((value) => (drivers = value));
+
+	onMount(() => {
+		protegerRuta();
+		let updateInterval: NodeJS.Timeout;
+		let authSubscription: { unsubscribe: () => void } | null = null;
+		let realtimeSubscription: any = null;
+		let bufferFlushInterval: NodeJS.Timeout;
+
+		const initialize = async () => {
+			try {
+				console.log('Inicializando componente...');
+				await getSession();
+				await new Promise((resolve) => setTimeout(resolve, 50));
+				await obtenerConductor();
+				await initMap();
+
+				// Cargar estado del seguimiento
+				const savedTrackingState = loadTrackingState();
+				if (savedTrackingState) {
+					userInitiatedTracking = true;
+					startTracking();
+				}
+
+				// Cargar historial de rutas si existe
+				if (conductorData) {
+					const historial = await obtenerHistorialRuta(conductorData.id);
+					positionHistory.set(historial);
+
+					// Dibujar ruta histórica
+					if (historial.length > 0) {
+						positions = historial.map((pos) => [pos.lat, pos.lng]);
+						dibujarRutaActual();
+					}
+				}
+
+				const subscriptions = await setupSubscriptions();
+				authSubscription = subscriptions.authSubscription;
+				realtimeSubscription = subscriptions.realtimeSubscription;
+
+				if (conductorData) {
+					getCurrentPosition();
+					await getOtherDrivers();
+				}
+
+				// Intervalo para enviar posiciones en buffer
+				bufferFlushInterval = setInterval(flushPositionBuffer, 15000); // Enviar cada 15 segundos
+
+				// Intervalo de actualización de otros conductores (10 segundos)
+				updateInterval = setInterval(async () => {
+					try {
+						await getOtherDrivers();
+					} catch (error) {
+						console.error('Error en intervalo de actualización:', error);
+					}
+				}, 10000);
+			} catch (error) {
+				console.error('Error en inicialización:', error);
+			}
+		};
+
+		initialize();
+
+		return () => {
+			console.log('Limpiando componente...');
+			clearInterval(updateInterval);
+			clearInterval(bufferFlushInterval);
+			stopTracking();
+			flushPositionBuffer(); // Enviar cualquier posición pendiente
+
+			if (authSubscription) {
+				authSubscription.unsubscribe();
+			}
+
+			if (realtimeSubscription) {
+				supabase.removeChannel(realtimeSubscription);
+			}
+
+			if (map) {
+				map.remove();
+				map = null;
+			}
+		};
+	});
+
+	// Inicializar mapa
+	const initMap = async (): Promise<boolean> => {
+		if (!browser || !mapContainer) return false;
+
+		try {
+			const leaflet = await import('leaflet');
+			L = leaflet.default;
+			await import('leaflet/dist/leaflet.css');
+
+			if (!map) {
+				map = L.map(mapContainer).setView([7.8939, -72.5078], 13);
+				L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+					attribution: '&copy; OpenStreetMap contributors'
+				}).addTo(map);
+				setTimeout(() => map.invalidateSize(), 100);
+			}
+			return true;
+		} catch (err) {
+			console.error('Error al inicializar mapa:', err);
+			error.set('Error al cargar el mapa');
+			return false;
+		}
+	};
+
+	const savePosition = async (lat: number, lng: number, accuracy?: number) => {
+		console.log('Guardando en Supabase:', { lat, lng, timestamp: new Date().toISOString() });
+
+		const positionData: PosicionConductor = {
+			conductor_id: conductorData?.id ?? 0,
+			lat,
+			lng,
+			accuracy,
+			timestamp: new Date().toISOString()
+		};
+
+		try {
+			const { data, error: insertError } = await supabase
+				.from('conductor_posiciones')
+				.insert([positionData])
+				.select();
+
+			if (insertError) throw insertError;
+
+			console.log('Posición guardada en Supabase:', data);
+		} catch (err) {
+			console.error('Error al guardar la posición:', err);
+		}
+	};
+
+	// Enviar posiciones en buffer a la base de datos
+	// Enviar posiciones en buffer a la base de datos
+	const flushPositionBuffer = async () => {
+		if (positionBuffer.length === 0 || !conductorData) return;
+
+		// Declarar positionsToSend fuera del try-catch para que sea accesible en ambos bloques
+		let positionsToSend: PosicionConductor[] = [];
+
+		try {
+			positionsToSend = [...positionBuffer];
+			positionBuffer = []; // Limpiar buffer
+
+			const { data, error: insertError } = await supabase
+				.from('conductor_posiciones')
+				.insert(positionsToSend)
+				.select();
+
+			if (insertError) throw insertError;
+
+			// Actualizar historial local
+			if (data) {
+				positionHistory.update((history) => [...history, ...(data as PosicionConductor[])]);
+			}
+
+			return data;
+		} catch (err) {
+			console.error('Error al enviar posiciones en buffer:', err);
+			// Reintentar en el próximo intervalo si falla
+			positionBuffer = [...positionsToSend, ...positionBuffer];
+			throw err;
+		}
+	};
+
+	// Obtener historial de rutas para un conductor
+	const obtenerHistorialRuta = async (conductorId: number): Promise<PosicionConductor[]> => {
+		try {
+			const { data, error } = await supabase
+				.from('conductor_posiciones')
+				.select('*')
+				.eq('conductor_id', conductorId)
+				.order('timestamp', { ascending: true });
+
+			if (error) throw error;
+			return data as PosicionConductor[];
+		} catch (err) {
+			console.error('Error al obtener historial de ruta:', err);
+			return [];
+		}
+	};
+
+	// Dibujar la ruta actual en el mapa
+	const dibujarRutaActual = () => {
+		if (!map || !L || positions.length === 0) return;
+
+		// Limpiar polilínea anterior
+		if (polyline) {
+			map.removeLayer(polyline);
+		}
+
+		// Crear nueva polilínea
+		polyline = L.polyline(positions, {
+			color: '#3388ff',
+			weight: 5,
+			opacity: 0.7,
+			dashArray: '10, 10'
+		}).addTo(map);
+
+		// Ajustar vista para mostrar toda la ruta
+		if (positions.length > 1) {
+			map.fitBounds(polyline.getBounds());
+		}
+	};
+
+	// Actualizar posición en el mapa
+	const updatePosition = async (lat: number, lng: number, accuracy?: number) => {
+		if (!map || !conductorData || !L) {
+			console.error('Faltan dependencias para updatePosition');
+			return;
+		}
+
+		console.log('Actualizando posición en el mapa...');
+
+		positions.push([lat, lng]);
+
+		if (positions.length > 1000) {
+			positions = positions.slice(-1000);
+		}
+
+		dibujarRutaActual();
+
+		if (!userMarker) {
+			userMarker = L.circle([lat, lng], {
+				radius: 3, // Tamaño del punto
+				color: '#ff0000', // Color rojo
+				fillColor: '#ff0000',
+				fillOpacity: 1
+			}).addTo(map);
+		} else {
+			userMarker.setLatLng([lat, lng]);
+		}
+
+		map.setView([lat, lng], map.getZoom());
+
+		if (accuracy) {
+			if (userMarker.accuracyCircle) {
+				map.removeLayer(userMarker.accuracyCircle);
+			}
+			userMarker.accuracyCircle = L.circle([lat, lng], { radius: accuracy }).addTo(map);
+		}
+
+		await savePosition(lat, lng, accuracy);
+	};
+
+	// Limpiar rutas antiguas (ejecutar periódicamente)
+	const limpiarRutasAntiguas = async (dias: number = 7) => {
+		const fechaLimite = new Date();
+		fechaLimite.setDate(fechaLimite.getDate() - dias);
+
+		const { error } = await supabase
+			.from('conductor_posiciones')
+			.delete()
+			.lt('timestamp', fechaLimite.toISOString());
+
+		if (error) console.error('Error limpiando rutas antiguas:', error);
+	};
+
+	// Obtener posición actual
+	const getCurrentPosition = () => {
+		if (!browser || !userInitiatedTracking) return;
+
+		if (navigator.geolocation) {
+			navigator.geolocation.getCurrentPosition(
+				(position) => {
+					updatePosition(
+						position.coords.latitude,
+						position.coords.longitude,
+						position.coords.accuracy
+					);
+				},
+				(err) => {
+					console.error('Error en getCurrentPosition:', err);
+					error.set('Error obteniendo ubicación: ' + err.message);
+				},
+				{ enableHighAccuracy: true, timeout: 10000 }
+			);
+		} else {
+			error.set('Geolocalización no soportada por este navegador');
+		}
+	};
+
+	// Iniciar seguimiento continuo
+	const startTracking = () => {
+		if (!browser || !userInitiatedTracking) return;
+
+		positions = [];
+		if (polyline) {
+			map.removeLayer(polyline);
+			polyline = null;
+		}
+
+		if (navigator.geolocation) {
+			watchId = navigator.geolocation.watchPosition(
+				(position) => {
+					console.log('Nueva posición detectada:', position.coords);
+					updatePosition(
+						position.coords.latitude,
+						position.coords.longitude,
+						position.coords.accuracy
+					);
+				},
+				(err) => {
+					console.error('Error en seguimiento:', err);
+					stopTracking();
+				},
+				{
+					enableHighAccuracy: true,
+					maximumAge: 500,
+					timeout: 5000
+				}
+			);
+
+			trackingActive.set(true);
+			console.log('Seguimiento GPS activado');
+		} else {
+			error.set('Geolocalización no soportada por este navegador');
+		}
+	};
+
+	// Habilitar seguimiento
+	const enableTracking = () => {
+		userInitiatedTracking = true;
+
+		if (isTracking) {
+			stopTracking();
+			saveTrackingState(false);
+		} else {
+			startTracking();
+			saveTrackingState(true);
+		}
+	};
+
+	// Detener seguimiento
+	const stopTracking = () => {
+		if (!browser) return;
+
+		if (watchId !== null) {
+			navigator.geolocation.clearWatch(watchId);
+			watchId = null;
+		}
+		trackingActive.set(false);
+		saveTrackingState(false);
+		console.log('Seguimiento GPS detenido');
+	};
+
+	// Guardar estado en localStorage
+	const saveTrackingState = (isActive: boolean) => {
+		if (browser) {
+			localStorage.setItem('trackingActive', JSON.stringify(isActive));
+		}
+	};
+
+	// Leer estado desde localStorage
+	const loadTrackingState = (): boolean => {
+		if (browser) {
+			const saved = localStorage.getItem('trackingActive');
+			return saved ? JSON.parse(saved) : false;
+		}
+		return false;
+	};
+
+	// Función auxiliar para actualizar marcadores de otros conductores
+	const updateOtherDriverMarker = (
+		driverId: number,
+		lat: number,
+		lng: number,
+		driverData: Conductor
+	) => {
+		if (!map || !L) return;
+
+		const marker = otherMarkers[driverId];
+		const position = [lat, lng];
+
+		if (marker) {
+			// Actualizar posición existente con animación
+			marker.setLatLng(position);
+		} else {
+			// Crear nuevo marcador
+			otherMarkers[driverId] = L.marker(position, {
+				icon: L.divIcon({
+					html: `
                         <div style="position: relative;">
                             <img src="https://cdn-icons-png.flaticon.com/512/477/477103.png" 
                                  style="width: 32px; height: 32px;"/>
@@ -456,217 +466,216 @@ const flushPositionBuffer = async () => {
                             </div>
                         </div>
                     `,
-                    iconSize: [32, 40],
-                    iconAnchor: [16, 40]
-                }),
-                title: driverData.nombre
-            })
-            .addTo(map)
-            .bindPopup(
-                `<b>${driverData.nombre}</b><br>
+					iconSize: [32, 40],
+					iconAnchor: [16, 40]
+				}),
+				title: driverData.nombre
+			})
+				.addTo(map)
+				.bindPopup(
+					`<b>${driverData.nombre}</b><br>
                  Placa: ${driverData.placa}<br>
                  Control: ${driverData.control}`
-            );
-        }
-        
-        // Actualizar la lista de otros conductores
-        otherDrivers.update(drivers => {
-            const existing = drivers.find(d => d.id === driverId);
-            if (existing) {
-                return drivers.map(d => 
-                    d.id === driverId 
-                        ? { ...d, lastPosition: { lat, lng, timestamp: new Date().toISOString() } } 
-                        : d
-                );
-            } else {
-                return [...drivers, { ...driverData, lastPosition: { lat, lng, timestamp: new Date().toISOString() } }];
-            }
-        });
-    };
+				);
+		}
 
-    // Obtener otros conductores
-    const getOtherDrivers = async () => {
-        if (!browser || !L || !map) return;
+		// Actualizar la lista de otros conductores
+		otherDrivers.update((drivers) => {
+			const existing = drivers.find((d) => d.id === driverId);
+			if (existing) {
+				return drivers.map((d) =>
+					d.id === driverId
+						? { ...d, lastPosition: { lat, lng, timestamp: new Date().toISOString() } }
+						: d
+				);
+			} else {
+				return [
+					...drivers,
+					{ ...driverData, lastPosition: { lat, lng, timestamp: new Date().toISOString() } }
+				];
+			}
+		});
+	};
 
-        try {
-            // Obtener posiciones de los últimos 5 minutos
-            const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
-            
-            const { data, error: sbError } = await supabase
-                .from('conductor_posiciones')
-                .select(`
+	// Obtener otros conductores
+	const getOtherDrivers = async () => {
+		if (!browser || !L || !map) return;
+
+		try {
+			// Obtener posiciones de los últimos 5 minutos
+			const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+
+			const { data, error: sbError } = await supabase
+				.from('conductor_posiciones')
+				.select(
+					`
                     conductor_id,
                     lat,
                     lng,
                     accuracy,
                     timestamp,
                     conductor!fk_conductor(id, nombre, placa, control, propiedad, telefono)
-                `)
-                .gt('timestamp', fiveMinutesAgo) // Solo posiciones recientes
-                .order('timestamp', { ascending: false });
+                `
+				)
+				.gt('timestamp', fiveMinutesAgo) // Solo posiciones recientes
+				.order('timestamp', { ascending: false });
 
-            if (sbError) throw sbError;
-            if (!data) return;
+			if (sbError) throw sbError;
+			if (!data) return;
 
-            // Agrupar por conductor_id y tomar la más reciente de cada uno
-            const latestPositions = data.reduce((acc: any[], current) => {
-                const existing = acc.find(item => item.conductor_id === current.conductor_id);
-                if (!existing) {
-                    acc.push(current);
-                }
-                return acc;
-            }, []);
+			// Agrupar por conductor_id y tomar la más reciente de cada uno
+			const latestPositions = data.reduce((acc: any[], current) => {
+				const existing = acc.find((item) => item.conductor_id === current.conductor_id);
+				if (!existing) {
+					acc.push(current);
+				}
+				return acc;
+			}, []);
 
-            const activeDrivers = latestPositions.filter(
-                (driver) => driver.conductor_id !== conductorData?.id
-            );
+			const activeDrivers = latestPositions.filter(
+				(driver) => driver.conductor_id !== conductorData?.id
+			);
 
-            // Limpiar marcadores antiguos
-            Object.keys(otherMarkers).forEach((id) => {
-                const driverId = parseInt(id);
-                if (!activeDrivers.some(d => d.conductor_id === driverId)) {
-                    map.removeLayer(otherMarkers[driverId]);
-                    delete otherMarkers[driverId];
-                }
-            });
+			// Limpiar marcadores antiguos
+			Object.keys(otherMarkers).forEach((id) => {
+				const driverId = parseInt(id);
+				if (!activeDrivers.some((d) => d.conductor_id === driverId)) {
+					map.removeLayer(otherMarkers[driverId]);
+					delete otherMarkers[driverId];
+				}
+			});
 
-            // Actualizar o crear marcadores
-            activeDrivers.forEach((driver) => {
-                updateOtherDriverMarker(
-                    driver.conductor_id,
-                    driver.lat,
-                    driver.lng,
-                    driver.conductor
-                );
-            });
-        } catch (err) {
-            console.error('Error en getOtherDrivers:', err);
-            error.set('Error al cargar otros conductores');
-        }
-    };
+			// Actualizar o crear marcadores
+			activeDrivers.forEach((driver) => {
+				updateOtherDriverMarker(driver.conductor_id, driver.lat, driver.lng, driver.conductor);
+			});
+		} catch (err) {
+			console.error('Error en getOtherDrivers:', err);
+			error.set('Error al cargar otros conductores');
+		}
+	};
 
-    // Obtener sesión actual
-    const getSession = async (): Promise<Session | null> => {
-        try {
-            const { data, error } = await supabase.auth.getSession();
-            if (error) throw error;
-            session.set(data.session);
-            return data.session;
-        } catch (err) {
-            console.error('Error en getSession:', err);
-            return null;
-        }
-    };
+	// Obtener sesión actual
+	const getSession = async (): Promise<Session | null> => {
+		try {
+			const { data, error } = await supabase.auth.getSession();
+			if (error) throw error;
+			session.set(data.session);
+			return data.session;
+		} catch (err) {
+			console.error('Error en getSession:', err);
+			return null;
+		}
+	};
 
-    // Obtener datos del conductor
-    const obtenerConductor = async () => {
-        isLoading.set(true);
-        error.set('');
-        try {
-            const session = await getSession();
-            if (!session?.user?.email) {
-                throw new Error('No hay usuario autenticado');
-            }
+	// Obtener datos del conductor
+	const obtenerConductor = async () => {
+		isLoading.set(true);
+		error.set('');
+		try {
+			const session = await getSession();
+			if (!session?.user?.email) {
+				throw new Error('No hay usuario autenticado');
+			}
 
-            const { data, error: sbError } = await supabase
-                .from('conductor')
-                .select('*')
-                .eq('email', session.user.email)
-                .single();
+			const { data, error: sbError } = await supabase
+				.from('conductor')
+				.select('*')
+				.eq('email', session.user.email)
+				.single();
 
-            if (sbError) throw sbError;
-            if (!data) {
-                throw new Error(`No se encontró conductor con email: ${session.user.email}`);
-            }
+			if (sbError) throw sbError;
+			if (!data) {
+				throw new Error(`No se encontró conductor con email: ${session.user.email}`);
+			}
 
-            conductor.set(data);
-            
-        } catch (err) {
-            console.error('Error en obtenerConductor:', err);
-            error.set(err instanceof Error ? err.message : 'Error desconocido al obtener conductor');
-            conductor.set(null);
-        } finally {
-            isLoading.set(false);
-        }
-    };
+			conductor.set(data);
+		} catch (err) {
+			console.error('Error en obtenerConductor:', err);
+			error.set(err instanceof Error ? err.message : 'Error desconocido al obtener conductor');
+			conductor.set(null);
+		} finally {
+			isLoading.set(false);
+		}
+	};
 
-    // Configurar suscripciones a cambios en tiempo real
-    const setupSubscriptions = async () => {
-        try {
-            const { data: authData } = supabase.auth.onAuthStateChange(async (event, supabaseSession) => {
-                console.log('Cambio en estado de autenticación:', event);
-                if (supabaseSession) {
-                    session.set(supabaseSession);
-                }
+	// Configurar suscripciones a cambios en tiempo real
+	const setupSubscriptions = async () => {
+		try {
+			const { data: authData } = supabase.auth.onAuthStateChange(async (event, supabaseSession) => {
+				console.log('Cambio en estado de autenticación:', event);
+				if (supabaseSession) {
+					session.set(supabaseSession);
+				}
 
-                if (event === 'SIGNED_IN') {
-                    await obtenerConductor();
-                    if (conductorData) {
-                        getCurrentPosition();
-                        await getOtherDrivers();
-                    }
-                } else if (event === 'SIGNED_OUT') {
-                    conductor.set(null);
-                    stopTracking();
-                }
-            });
+				if (event === 'SIGNED_IN') {
+					await obtenerConductor();
+					if (conductorData) {
+						getCurrentPosition();
+						await getOtherDrivers();
+					}
+				} else if (event === 'SIGNED_OUT') {
+					conductor.set(null);
+					stopTracking();
+				}
+			});
 
-            // Suscripción más específica para cambios de posición
-            const positionsChannel = supabase
-                .channel('positions_updates')
-                .on(
-                    'postgres_changes',
-                    {
-                        event: 'INSERT',
-                        schema: 'public',
-                        table: 'conductor_posiciones'
-                    },
-                    async (payload) => {
-                        // Solo actualizar si es un conductor diferente
-                        if (payload.new?.conductor_id !== conductorData?.id) {
-                            // Obtener datos completos del conductor
-                            const { data: driverData, error } = await supabase
-                                .from('conductor')
-                                .select('*')
-                                .eq('id', payload.new.conductor_id)
-                                .single();
-                                
-                            if (!error && driverData) {
-                                // Actualizar marcador inmediatamente
-                                updateOtherDriverMarker(
-                                    payload.new.conductor_id,
-                                    payload.new.lat,
-                                    payload.new.lng,
-                                    driverData
-                                );
-                            }
-                        }
-                    }
-                )
-                .subscribe();
+			// Suscripción más específica para cambios de posición
+			const positionsChannel = supabase
+				.channel('positions_updates')
+				.on(
+					'postgres_changes',
+					{
+						event: 'INSERT',
+						schema: 'public',
+						table: 'conductor_posiciones'
+					},
+					async (payload) => {
+						// Solo actualizar si es un conductor diferente
+						if (payload.new?.conductor_id !== conductorData?.id) {
+							// Obtener datos completos del conductor
+							const { data: driverData, error } = await supabase
+								.from('conductor')
+								.select('*')
+								.eq('id', payload.new.conductor_id)
+								.single();
 
-            return { 
-                authSubscription: authData.subscription, 
-                realtimeSubscription: positionsChannel 
-            };
-        } catch (error) {
-            console.error('Error en setupSubscriptions:', error);
-            return { authSubscription: null, realtimeSubscription: null };
-        }
-    };
+							if (!error && driverData) {
+								// Actualizar marcador inmediatamente
+								updateOtherDriverMarker(
+									payload.new.conductor_id,
+									payload.new.lat,
+									payload.new.lng,
+									driverData
+								);
+							}
+						}
+					}
+				)
+				.subscribe();
 
-    // Limpieza al desmontar el componente
-    onDestroy(() => {
-        if (!browser) return;
-        console.log('Destruyendo componente...');
-        stopTracking();
-        flushPositionBuffer(); // Asegurarse de enviar posiciones pendientes
-        
-        if (map) {
-            map.remove();
-            map = null;
-        }
-    });
+			return {
+				authSubscription: authData.subscription,
+				realtimeSubscription: positionsChannel
+			};
+		} catch (error) {
+			console.error('Error en setupSubscriptions:', error);
+			return { authSubscription: null, realtimeSubscription: null };
+		}
+	};
+
+	// Limpieza al desmontar el componente
+	onDestroy(() => {
+		if (!browser) return;
+		console.log('Destruyendo componente...');
+		stopTracking();
+		flushPositionBuffer(); // Asegurarse de enviar posiciones pendientes
+
+		if (map) {
+			map.remove();
+			map = null;
+		}
+	});
 </script>
 
 <svelte:head>
@@ -770,9 +779,6 @@ const flushPositionBuffer = async () => {
 		</div>
 	</main>
 </div>
-
-
-  
 
 <style>
 	.dashboard-container {

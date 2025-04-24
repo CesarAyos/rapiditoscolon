@@ -6,6 +6,8 @@
 	import { protegerRuta } from '../../components/protegerRuta';
 	import { onMount } from 'svelte';
 	import Turnosasignados from '../../components/turnosasignados.svelte';
+	import Turnos from '../../components/turnos.svelte';
+	
 
 	onMount(() => {
 		protegerRuta();
@@ -59,6 +61,19 @@
 				</div>
 				<div class="card-body">
 					<Carreras />
+				</div>
+			</div>
+		</div>
+
+
+		<!-- Turnos -->
+		<div class="col-lg-6">
+			<div class="card h-100 shadow-sm">
+				<div class="card-header bg-primary text-white">
+					<h3 class="h5 mb-0">Gestión de Turnos</h3>
+				</div>
+				<div class="card-body">
+					<Turnos />
 				</div>
 			</div>
 		</div>
