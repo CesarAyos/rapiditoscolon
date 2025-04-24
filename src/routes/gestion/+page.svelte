@@ -7,12 +7,16 @@
 	import { onMount } from 'svelte';
 	import Turnosasignados from '../../components/turnosasignados.svelte';
 	import Turnos from '../../components/turnos.svelte';
+	import ProtectedArea from '../../components/ProtectedArea.svelte';
+	
 	
 
 	onMount(() => {
 		protegerRuta();
 	});
 </script>
+
+<ProtectedArea>
 
 <div class="container-fluid p-4 bg-light min-vh-100">
 	<!-- Header -->
@@ -103,6 +107,7 @@
 		</div>
 	</div>
 </div>
+</ProtectedArea>
 
 <style>
 	.card {

@@ -5,6 +5,8 @@
 	import Lock from '../../../components/lock.svelte';
 	import type { Session, Subscription } from '@supabase/supabase-js';
 	import { protegerRuta } from '../../../components/protegerRuta';
+	import Turnosasignados from '../../../components/turnosasignados.svelte';
+	
 	
 	
 
@@ -255,6 +257,7 @@
 						<span class="user-badge">{conductorData.propiedad}: {conductorData.nombre}</span>
 						<span class="user-badge">Placa: {conductorData.placa}</span>
 						<a href="/auth/dashboard-conductor/maps" class="user-badge">Mapa</a>
+						<a href="/pasajeros" class="user-badge">Pasajeros</a>
 						<Lock />
 					</div>
 				{:else}
@@ -294,6 +297,10 @@
 							<span>{conductorData.telefono || 'N/A'}</span>
 						</div>
 					</div>
+				</div>
+
+				<div>
+					<Turnosasignados/>
 				</div>
 
 				<div class="actions-panel">

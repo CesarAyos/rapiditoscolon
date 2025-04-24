@@ -598,6 +598,7 @@
 			isLoading.set(false);
 		}
 	};
+    
 
 	// Configurar suscripciones a cambios en tiempo real
 	const setupSubscriptions = async () => {
