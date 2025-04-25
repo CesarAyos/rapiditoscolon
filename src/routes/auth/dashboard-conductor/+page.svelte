@@ -6,9 +6,6 @@
 	import type { Session, Subscription } from '@supabase/supabase-js';
 	import { protegerRuta } from '../../../components/protegerRuta';
 	import Turnosasignados from '../../../components/turnosasignados.svelte';
-	
-	
-	
 
 	type Conductor = {
 		id: number;
@@ -35,87 +32,39 @@
 	const isLoading = writable<boolean>(false);
 	const session = writable<Session | null>(null);
 
-	// Variables reactivas
+	let sessionValue: Session | null = null;
+	session.subscribe((value) => (sessionValue = value));
+
 	let conductorData: Conductor | null = null;
+	conductor.subscribe((value) => (conductorData = value));
+
 	let currentEstado: EstadoPosible = 'descanso';
-	let errorMessage = '';
-	let loading = false;
-	let currentSession: Session | null = null;
+	estadoActual.subscribe((value) => (currentEstado = value));
 
-	onMount(() => {
-		protegerRuta();
-    let authListener: { subscription: Subscription } | null = null;
+	onMount(async () => {
+    protegerRuta();
 
-    // Usamos una IIFE async para manejar la lógica asíncrona
-    (async () => {
-        try {
-            // 1. Primero obtener la sesión
-            const userSession = await getSession();
-
-            // 2. Solo si hay sesión, obtener conductor
-            if (userSession) {
-                await obtenerConductor();
-            }
-
-            // 3. Configurar listener de autenticación
-            const { data: authData } = supabase.auth.onAuthStateChange(async (event, authSession) => {
-                if (event === 'SIGNED_IN' && authSession) {
-                    session.set(authSession);
-                    await obtenerConductor();
-                } else if (event === 'SIGNED_OUT') {
-                    session.set(null);
-                    conductor.set(null);
-                    estadoActual.set('descanso');
-                    error.set('');
-                }
-            });
-
-            authListener = authData;
-        } catch (err) {
-            console.error('Error en inicialización:', err);
-            error.set('Error al cargar la sesión');
+    try {
+        const { data: authSession } = await supabase.auth.getSession();
+        if (authSession.session) {
+            session.set(authSession.session);
+            console.log("Sesión almacenada correctamente:", authSession.session);
+            await obtenerConductor(); // Cargar datos solo al iniciar la sesión
+        } else {
+            console.log("No se encontró una sesión activa.");
         }
-    })();
-
-    // Función de limpieza sincrónica
-    return () => {
-        if (authListener?.subscription) {
-            authListener.subscription.unsubscribe();
-        }
-    };
+    } catch (err) {
+        manejarError(err, "Error al obtener la sesión inicial");
+    }
 });
 
-	// Suscripciones
-	conductor.subscribe((value) => (conductorData = value));
-	estadoActual.subscribe((value) => (currentEstado = value));
-	error.subscribe((value) => (errorMessage = value));
-	isLoading.subscribe((value) => (loading = value));
-	session.subscribe((value) => (currentSession = value));
 
-	const getSession = async (): Promise<Session | null> => {
-		try {
-			isLoading.set(true);
-			const { data, error: sbError } = await supabase.auth.getSession();
 
-			if (sbError) {
-				throw sbError;
-			}
 
-			if (!data.session) {
-				session.set(null);
-				return null;
-			}
-
-			session.set(data.session);
-			return data.session;
-		} catch (err) {
-			console.error('Error en getSession:', err);
-			error.set(err instanceof Error ? err.message : 'Error de autenticación');
-			session.set(null);
-			return null;
-		} finally {
-			isLoading.set(false);
-		}
+	// Función para manejar errores
+	const manejarError = (err: unknown, mensaje: string) => {
+		console.error(mensaje, err);
+		error.set(err instanceof Error ? err.message : mensaje);
 	};
 
 	const obtenerConductor = async (): Promise<boolean> => {
@@ -123,29 +72,28 @@
 		error.set('');
 
 		try {
-			if (!currentSession?.user?.email) {
-				throw new Error('No hay usuario autenticado');
-			}
+			const email = sessionValue?.user?.email;
+			if (!email) throw new Error('No hay usuario autenticado');
 
 			const { data, error: sbError } = await supabase
 				.from('conductor')
 				.select('*')
-				.eq('email', currentSession.user.email)
+				.eq('email', email)
 				.single();
 
-			if (sbError) throw sbError;
-			if (!data) throw new Error('Conductor no encontrado');
+			if (sbError || !data) throw sbError ?? new Error('Conductor no encontrado');
 
+			console.log('Conductor obtenido correctamente:', data);
 			conductor.set(data);
 			await obtenerUltimoEstado(data.id);
 			return true;
 		} catch (err) {
-			console.error('Error en obtenerConductor:', err);
-			error.set(err instanceof Error ? err.message : 'Error al cargar datos');
+			manejarError(err, 'Error al cargar datos del conductor');
 			conductor.set(null);
 			return false;
 		} finally {
 			isLoading.set(false);
+			console.log('Estado de carga actualizado:', $isLoading);
 		}
 	};
 
@@ -160,43 +108,22 @@
 				.maybeSingle();
 
 			if (sbError) throw sbError;
-
-			if (data?.estado && isValidEstado(data.estado)) {
-				estadoActual.set(data.estado);
-			} else {
-				estadoActual.set('descanso');
-			}
+			estadoActual.set((data?.estado as EstadoPosible) ?? 'descanso');
 		} catch (err) {
-			console.error('Error obteniendo estado:', err);
-			error.set('Error al cargar estado actual');
+			manejarError(err, 'Error al cargar estado actual');
 			estadoActual.set('descanso');
 		}
-	};
-
-	const isValidEstado = (estado: string): estado is EstadoPosible => {
-		return [
-			'en_servicio_colon',
-			'en_servicio_ureña',
-			'en_ruta_colon_ureña',
-			'en_ruta_ureña_colon',
-			'accidentado',
-			'descanso'
-		].includes(estado);
 	};
 
 	const cambiarEstado = async (
 		nuevoEstado: EstadoPosible,
 		descripcion: string = ''
 	): Promise<void> => {
-		if (!conductorData?.id) {
-			error.set('No hay datos del conductor');
-			return;
-		}
-
 		isLoading.set(true);
 
 		try {
-			// 1. Buscar el último estado registrado
+			if (!conductorData?.id) throw new Error('No hay datos del conductor');
+
 			const { data: ultimoEstado, error: queryError } = await supabase
 				.from('estado_conductor')
 				.select('id')
@@ -207,50 +134,40 @@
 
 			if (queryError) throw queryError;
 
-			// 2. Decidir si actualizar o insertar
 			if (ultimoEstado?.id) {
-				// Actualizar el último registro existente
 				const { error: updateError } = await supabase
 					.from('estado_conductor')
-					.update({
-						estado: nuevoEstado,
-						descripcion: descripcion || null
-					})
+					.update({ estado: nuevoEstado, descripcion })
 					.eq('id', ultimoEstado.id);
-
 				if (updateError) throw updateError;
 			} else {
-				// Crear un nuevo registro si no existe uno previo
-				const { error: insertError } = await supabase.from('estado_conductor').insert({
-					conductor_id: conductorData.id,
-					estado: nuevoEstado,
-					descripcion: descripcion || null,
-					created_at: new Date().toISOString()
-				});
-
+				const { error: insertError } = await supabase
+					.from('estado_conductor')
+					.insert({
+						conductor_id: conductorData.id,
+						estado: nuevoEstado,
+						descripcion,
+						created_at: new Date().toISOString()
+					});
 				if (insertError) throw insertError;
 			}
 
-			// 3. Actualizar el estado en el frontend
 			estadoActual.set(nuevoEstado);
 			error.set(`✅ Estado actualizado: ${nuevoEstado}`);
 			setTimeout(() => error.set(''), 3000);
 		} catch (err) {
-			console.error('Error al cambiar estado:', err);
-			error.set(err instanceof Error ? err.message : 'Error al actualizar estado');
+			manejarError(err, 'Error al actualizar estado');
 			setTimeout(() => error.set(''), 5000);
 		} finally {
 			isLoading.set(false);
 		}
 	};
-
-	
 </script>
 
 <div class="dashboard-container">
 	<nav class="dashboard-nav">
 		<div class="nav-user">
-			{#if currentSession}
+			{#if sessionValue}
 				{#if conductorData}
 					<div class="badge-container">
 						<span class="user-badge">Control: {conductorData.control}</span>
@@ -261,8 +178,8 @@
 						<Lock />
 					</div>
 				{:else}
-				<span class="user-name">No autenticado</span>
-				<a href="/auth/login" class="login-link">Iniciar sesión</a>
+					<span class="user-name">No autenticado</span>
+					<a href="/auth/login" class="login-link">Iniciar sesión</a>
 				{/if}
 			{/if}
 		</div>
@@ -270,7 +187,7 @@
 
 	<main class="dashboard-content">
 		<div class="content-wrapper">
-			{#if loading}
+			{#if $isLoading}
 				<div class="loading-overlay">
 					<div class="spinner"></div>
 					<p>Cargando datos...</p>
@@ -300,7 +217,7 @@
 				</div>
 
 				<div>
-					<Turnosasignados/>
+					<Turnosasignados />
 				</div>
 
 				<div class="actions-panel">
@@ -368,9 +285,9 @@
 				</div>
 			{/if}
 
-			{#if errorMessage}
-				<div class="notification {errorMessage.includes('actualizado') ? 'success' : 'error'}">
-					{errorMessage}
+			{#if $error}
+				<div class="notification {$error.includes('actualizado') ? 'success' : 'error'}">
+					{$error}
 					<button class="close-btn" on:click={() => error.set('')}>×</button>
 				</div>
 			{/if}
