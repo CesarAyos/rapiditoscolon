@@ -58,9 +58,6 @@
     }
 });
 
-
-
-
 	// Función para manejar errores
 	const manejarError = (err: unknown, mensaje: string) => {
 		console.error(mensaje, err);
