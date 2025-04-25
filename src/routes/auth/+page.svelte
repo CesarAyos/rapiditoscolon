@@ -1,6 +1,8 @@
 <script lang="ts">
     import { supabase } from '../../components/supabase';
     import { goto } from '$app/navigation';
+	
+	
 
     let email = '';
     let password = '';

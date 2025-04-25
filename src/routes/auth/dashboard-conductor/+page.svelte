@@ -6,6 +6,8 @@
 	import type { Session, Subscription } from '@supabase/supabase-js';
 	import { protegerRuta } from '../../../components/protegerRuta';
 	import Turnosasignados from '../../../components/turnosasignados.svelte';
+	import Estado from '../../../components/estado.svelte';
+	
 
 	type Conductor = {
 		id: number;
@@ -211,6 +213,10 @@
 							<span>{conductorData.telefono || 'N/A'}</span>
 						</div>
 					</div>
+				</div>
+
+				<div>
+					<Estado/>
 				</div>
 
 				<div>
