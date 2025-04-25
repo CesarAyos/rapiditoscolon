@@ -1,80 +1,90 @@
 <script lang="ts">
-	import { supabase } from '../../components/supabase';
-	import { goto } from '$app/navigation';
+    import { supabase } from '../../components/supabase';
+    import { goto } from '$app/navigation';
 
-	let email = '';
-	let password = '';
-	let userType: 'conductor' | 'pasajero' = 'conductor';
-	let rememberMe = false;
-	let isLoading = false;
-	let errorMessage = '';
+    let email = '';
+    let password = '';
+    let userType: 'conductor' | 'pasajero' = 'conductor';
+    let rememberMe = false;
+    let isLoading = false;
+    let errorMessage = '';
 
-	const handleLogin = async () => {
-		isLoading = true;
-		errorMessage = '';
+    // Función reutilizable para validar email
+    const isValidEmail = (email: string): boolean => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
-		// Validación mejorada
-		if (!email || !password) {
-			errorMessage = 'Por favor, completa todos los campos';
-			isLoading = false;
-			return;
-		}
+    // Función para manejar almacenamiento
+    const setAuthToken = (session: any, userType: string) => {
+        const storage = rememberMe ? localStorage : sessionStorage;
+        storage.setItem('supabase.auth.token', JSON.stringify(session));
+        storage.setItem('userType', userType);
+    };
 
-		if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-			errorMessage = 'Por favor ingresa un email válido';
-			isLoading = false;
-			return;
-		}
+    const handleLogin = async () => {
+        isLoading = true;
+        errorMessage = '';
 
-		try {
-			// 1. Autenticación con Supabase
-			const { data, error } = await supabase.auth.signInWithPassword({
-				email: email.trim().toLowerCase(),
-				password: password
-			});
+        // Validación mejorada
+        if (!email || !password) {
+            errorMessage = 'Por favor, completa todos los campos';
+            isLoading = false;
+            return;
+        }
 
-			if (error) throw error;
-			if (!data?.user) throw new Error('No se pudo autenticar');
+        if (!isValidEmail(email)) {
+            errorMessage = 'Por favor ingresa un email válido';
+            isLoading = false;
+            return;
+        }
 
-			// 2. Verificar el tipo de usuario en la base de datos
-			const { data: userData, error: dbError } = await supabase
-				.from(userType)
-				.select('*')
-				.eq('email', email)
-				.single();
+        try {
+            console.time('Login process'); // Medir tiempos de ejecución
 
-			if (dbError || !userData) {
-				throw new Error(`No se encontró un ${userType} con ese email`);
-			}
+            // 1. Autenticación con Supabase
+            const { data, error } = await supabase.auth.signInWithPassword({
+                email: email.trim().toLowerCase(),
+                password: password
+            });
 
-			// 3. Opción "Recordarme"
-			const storage = rememberMe ? localStorage : sessionStorage;
-			storage.setItem('supabase.auth.token', JSON.stringify(data.session));
-			storage.setItem('userType', userType);
+            console.log('Respuesta de Supabase:', data, error);
+            if (error) throw error;
+            if (!data || !data.user) throw new Error('No se pudo autenticar. Usuario no encontrado.');
 
-			// 4. Redirigir al dashboard correspondiente
-			goto(`auth/dashboard-${userType}`);
-		} catch (error: unknown) {
-			console.error('Error en login:', error);
+            // 2. Verificar el tipo de usuario en la base de datos
+            const { data: userData, error: dbError } = await supabase
+                .from(userType)
+                .select('*')
+                .eq('email', email)
+                .single();
 
-			if (error instanceof Error) {
-				if (error.message.includes('Invalid login credentials')) {
-					errorMessage = 'Credenciales incorrectas. Verifica tu email y contraseña.';
-				} else if (error.message.includes('Email not confirmed')) {
-					errorMessage = 'Por favor verifica tu email antes de iniciar sesión';
-				} else if (error.message.includes('No se encontró')) {
-					errorMessage = `El email no está registrado como ${userType}. ¿Quieres iniciar como ${userType === 'pasajero' ? 'conductor' : 'pasajero'}?`;
-				} else {
-					errorMessage = error.message || 'Error al iniciar sesión';
-				}
-			} else {
-				errorMessage = 'Ocurrió un error inesperado. Intenta nuevamente.';
-			}
-		} finally {
-			isLoading = false;
-		}
-	};
+            if (dbError || !userData) {
+                throw new Error(`No se encontró un ${userType} con ese email`);
+            }
+
+            // 3. Opción "Recordarme"
+            setAuthToken(data.session, userType);
+
+            // 4. Redirigir al dashboard correspondiente con depuración
+            console.log('Redirigiendo a:', `auth/dashboard-${userType}`);
+            goto(`auth/dashboard-${userType}`);
+
+            console.timeEnd('Login process'); // Fin de medición de tiempos
+        } catch (error: unknown) {
+            console.error('Error en login:', error);
+
+            const errorMessages: Record<string, string> = {
+                'Invalid login credentials': 'Credenciales incorrectas. Verifica tu email y contraseña.',
+                'Email not confirmed': 'Por favor verifica tu email antes de iniciar sesión',
+            };
+
+            errorMessage = error instanceof Error
+                ? errorMessages[error.message] || error.message
+                : 'Ocurrió un error inesperado. Intenta nuevamente.';
+        } finally {
+            isLoading = false;
+        }
+    };
 </script>
+
 
 <div class="wrapper">
   <div class="scroll-container">
