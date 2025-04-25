@@ -260,287 +260,307 @@
 	</div>
   </div>
 
-<style>
-	/* === ESTILOS GLOBALES (igual que tu pantalla de inicio) === */
+  <style>
 	:global(body) {
-		font-family: 'Poppins', sans-serif;
-		background: linear-gradient(135deg, #f3f4f6, #0f0f0f);
-		height: 100vh;
-		margin: 0;
-		padding: 0;
-		overflow: hidden;
+	  margin: 0;
+	  padding: 0;
+	  font-family: 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+	  background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+	  min-height: 100vh;
 	}
-
+  
 	.wrapper {
-		height: 100vh;
-		overflow-y: auto; /* Permite scroll si el contenido es largo */
+	  display: flex;
+	  justify-content: center;
+	  align-items: center;
+	  min-height: 100vh;
+	  padding: 20px;
 	}
-
+  
 	.scroll-container {
-		min-height: 100vh;
-		display: flex;
-		flex-direction: column;
-		padding: 20px 0; /* Espacio para el scroll */
+	  width: 100%;
+	  max-width: 800px;
+	  perspective: 1000px;
 	}
-
+  
 	.container {
-		background: rgba(255, 255, 255, 0.2);
-		backdrop-filter: blur(10px);
-		border: 1px solid rgba(255, 255, 255, 0.3);
-		width: 80%;
-		max-width: 600px;
-		margin: 2rem auto; /* Margen superior para la animación */
-		padding: 2.5rem;
-		border-radius: 20px;
-		box-shadow: 0 15px 35px rgba(0, 0, 0, 0.2);
-		animation: fallDown 1s ease-out forwards;
-		opacity: 0; /* Inicia invisible */
+	  background: white;
+	  border-radius: 15px;
+	  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+	  overflow: hidden;
+	  transition: transform 0.5s ease;
+	  position: relative;
+	  z-index: 1;
 	}
-
+  
 	.container:hover {
-		transform: translateY(-50%) scale(1.02);
-		box-shadow:
-			0 20px 40px rgba(0, 0, 0, 0.3),
-			0 10px 20px rgba(0, 0, 0, 0.2) !important;
+	  transform: translateY(-5px);
 	}
-
+  
+	.container.text-center {
+	  padding: 40px;
+	}
+  
 	.title {
-		font-size: 2.5rem;
-		font-weight: 700;
-		color: #fff;
-		text-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
-		margin-bottom: 1.5rem;
-		position: relative;
-		display: inline-block;
-		animation: textGlow 2s infinite alternate;
+	  color: #2c3e50;
+	  font-size: 2.2rem;
+	  margin-bottom: 10px;
+	  font-weight: 700;
+	  position: relative;
+	  display: inline-block;
 	}
-
+  
 	.title::after {
-		content: '';
-		position: absolute;
-		bottom: -10px;
-		left: 50%;
-		transform: translateX(-50%);
-		width: 50px;
-		height: 3px;
-		background: #fff;
-		border-radius: 3px;
+	  content: '';
+	  position: absolute;
+	  bottom: -8px;
+	  left: 50%;
+	  transform: translateX(-50%);
+	  width: 60px;
+	  height: 3px;
+	  background: #3498db;
+	  border-radius: 3px;
 	}
-
+  
 	.subtitle {
-		font-size: 1.2rem;
-		color: rgba(255, 255, 255, 0.9);
-		margin-bottom: 2rem;
-		font-weight: 300;
+	  color: #7f8c8d;
+	  font-size: 1.1rem;
+	  margin-bottom: 30px;
 	}
-
-	/* === ESTILOS DEL FORMULARIO (los que ya tenías) === */
+  
 	.driver-form {
-		max-width: 500px;
-		margin: 0 auto;
-		text-align: left;
+	  display: grid;
+	  grid-template-columns: 1fr 1fr;
+	  gap: 20px;
 	}
-
+  
 	.form-group {
-		margin-bottom: 1.5rem;
-		position: relative;
+	  position: relative;
+	  margin-bottom: 25px;
 	}
-
-	label {
-		display: block;
-		margin-bottom: 0.5rem;
-		color: rgba(255, 255, 255, 0.9);
-		font-weight: 300;
+  
+	.form-group label {
+	  display: block;
+	  margin-bottom: 8px;
+	  color: #34495e;
+	  font-weight: 500;
+	  font-size: 0.95rem;
 	}
-
-	input,
-	select {
-		width: 100%;
-		padding: 10px 0;
-		background: transparent;
-		border: none;
-		border-bottom: 1px solid rgba(255, 255, 255, 0.3);
-		color: white;
-		font-size: 1rem;
-		outline: none;
-		transition: all 0.3s ease;
+  
+	.form-group input,
+	.form-group select {
+	  width: 100%;
+	  padding: 12px 0;
+	  border: none;
+	  border-bottom: 2px solid #ecf0f1;
+	  background: transparent;
+	  font-size: 1rem;
+	  color: #2c3e50;
+	  transition: all 0.3s ease;
 	}
-
-	input:focus,
-	select:focus {
-		border-bottom-color: white;
+  
+	.form-group input:focus,
+	.form-group select:focus {
+	  outline: none;
+	  border-bottom-color: #3498db;
 	}
-
+  
+	.form-group input::placeholder {
+	  color: #bdc3c7;
+	}
+  
 	.underline {
-		position: absolute;
-		bottom: 0;
-		left: 0;
-		width: 0;
-		height: 2px;
-		background: white;
-		transition: width 0.3s ease;
+	  position: absolute;
+	  bottom: 0;
+	  left: 0;
+	  width: 0;
+	  height: 2px;
+	  background: #3498db;
+	  transition: width 0.3s ease;
 	}
-
-	input:focus ~ .underline,
-	select:focus ~ .underline {
-		width: 100%;
+  
+	.form-group input:focus ~ .underline,
+	.form-group select:focus ~ .underline {
+	  width: 100%;
 	}
-
-	.form-check {
-		margin: 2rem 0;
-		display: flex;
-		align-items: center;
+  
+	.password-input {
+	  position: relative;
 	}
-
-	.form-check input {
-		width: auto;
-		margin-right: 10px;
-	}
-
-	.btn-submit {
-		background: rgba(255, 255, 255, 0.1) !important;
-		color: white !important;
-		border: none;
-		padding: 12px 25px;
-		border-radius: 50px !important;
-		font-weight: 600 !important;
-		text-transform: uppercase;
-		letter-spacing: 1px;
-		transition: all 0.4s ease;
-		display: flex;
-		align-items: center;
-		gap: 10px;
-		margin: 0 auto;
-		cursor: pointer;
-	}
-
-	.btn-submit:hover {
-		background: rgba(255, 255, 255, 0.2) !important;
-		transform: translateY(-3px);
-		box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2);
-	}
-
-	.btn-submit:disabled {
-		opacity: 0.5;
-		cursor: not-allowed;
-		transform: none !important;
-	}
-
-	/* === ELEMENTOS FLOTANTES === */
-	.floating-elements {
-		position: absolute;
-		top: 0;
-		left: 0;
-		width: 100%;
-		height: 100%;
-		overflow: hidden;
-		z-index: -1;
-	}
-
-	.circle {
-		position: absolute;
-		border-radius: 50%;
-		background: rgba(255, 255, 255, 0.1);
-		animation: float 15s infinite linear;
-	}
-
-	.circle-1 {
-		width: 100px;
-		height: 100px;
-		top: 10%;
-		left: 10%;
-	}
-
-	.circle-2 {
-		width: 150px;
-		height: 150px;
-		top: 60%;
-		left: 70%;
-		animation-delay: 2s;
-	}
-
-	.circle-3 {
-		width: 70px;
-		height: 70px;
-		top: 80%;
-		left: 20%;
-		animation-delay: 4s;
-	}
-
+  
 	.toggle-password {
-		position: absolute;
-		right: 0;
-		top: 70%;
-		transform: translateY(-50%);
-		background: transparent;
-		border: none;
-		cursor: pointer;
-		font-size: 1.1rem;
-		padding: 5px 8px;
-		color: rgba(255, 255, 255, 0.7);
-		transition: all 0.3s;
+	  position: absolute;
+	  right: 0;
+	  top: 50%;
+	  transform: translateY(-50%);
+	  background: none;
+	  border: none;
+	  cursor: pointer;
+	  font-size: 1.2rem;
+	  color: #7f8c8d;
+	  padding: 5px;
 	}
-
-	.toggle-password:hover {
-		color: white;
-		transform: translateY(-50%) scale(1.1);
+  
+	.form-check {
+	  grid-column: span 2;
+	  display: flex;
+	  align-items: center;
+	  margin: 15px 0;
 	}
-
-	/* === ANIMACIONES === */
-	@keyframes fadeInUp {
-		from {
-			opacity: 0;
-			transform: translateY(50px) translateY(-50%);
-		}
-		to {
-			opacity: 1;
-			transform: translateY(0) translateY(-50%);
-		}
+  
+	.form-check input {
+	  margin-right: 10px;
+	  width: auto;
 	}
-
+  
+	.form-check label {
+	  color: #7f8c8d;
+	  font-size: 0.9rem;
+	}
+  
+	.btn-submit {
+	  grid-column: span 2;
+	  background: linear-gradient(to right, #3498db, #2980b9);
+	  color: white;
+	  border: none;
+	  padding: 15px;
+	  border-radius: 50px;
+	  font-size: 1.1rem;
+	  font-weight: 600;
+	  cursor: pointer;
+	  transition: all 0.3s ease;
+	  display: flex;
+	  align-items: center;
+	  justify-content: center;
+	  box-shadow: 0 4px 15px rgba(52, 152, 219, 0.3);
+	}
+  
+	.btn-submit:hover {
+	  transform: translateY(-2px);
+	  box-shadow: 0 6px 20px rgba(52, 152, 219, 0.4);
+	}
+  
+	.btn-submit:disabled {
+	  background: #bdc3c7;
+	  cursor: not-allowed;
+	  transform: none;
+	  box-shadow: none;
+	}
+  
+	.btn-icon {
+	  margin-right: 10px;
+	  font-size: 1.2rem;
+	}
+  
+	.alert {
+	  padding: 15px;
+	  border-radius: 8px;
+	  margin-bottom: 25px;
+	  background: #e74c3c;
+	  color: white;
+	  font-weight: 500;
+	  text-align: center;
+	  animation: fadeIn 0.3s ease;
+	}
+  
+	.floating-elements {
+	  position: absolute;
+	  top: 0;
+	  left: 0;
+	  width: 100%;
+	  height: 100%;
+	  overflow: hidden;
+	  z-index: -1;
+	}
+  
+	.circle {
+	  position: absolute;
+	  border-radius: 50%;
+	  background: rgba(52, 152, 219, 0.1);
+	  animation: float 15s infinite linear;
+	}
+  
+	.circle-1 {
+	  width: 150px;
+	  height: 150px;
+	  top: -50px;
+	  left: -50px;
+	}
+  
+	.circle-2 {
+	  width: 250px;
+	  height: 250px;
+	  bottom: -100px;
+	  right: -100px;
+	  animation-delay: 3s;
+	}
+  
+	.circle-3 {
+	  width: 100px;
+	  height: 100px;
+	  top: 30%;
+	  right: 20%;
+	  animation-delay: 6s;
+	}
+  
 	@keyframes float {
-		0% {
-			transform: translateY(0) rotate(0deg);
-		}
-		50% {
-			transform: translateY(-20px) rotate(180deg);
-		}
-		100% {
-			transform: translateY(0) rotate(360deg);
-		}
+	  0% {
+		transform: translateY(0) rotate(0deg);
+	  }
+	  50% {
+		transform: translateY(-20px) rotate(180deg);
+	  }
+	  100% {
+		transform: translateY(0) rotate(360deg);
+	  }
 	}
-
-	@keyframes textGlow {
-		from {
-			text-shadow: 0 0 5px rgba(255, 255, 255, 0.5);
-		}
-		to {
-			text-shadow:
-				0 0 15px rgba(255, 255, 255, 0.8),
-				0 0 20px rgba(255, 255, 255, 0.6);
-		}
+  
+	@keyframes fadeIn {
+	  from {
+		opacity: 0;
+		transform: translateY(-10px);
+	  }
+	  to {
+		opacity: 1;
+		transform: translateY(0);
+	  }
 	}
-
-	@keyframes fallDown {
-		from {
-			opacity: 0;
-			transform: translateY(-100px);
-		}
-		to {
-			opacity: 1;
-			transform: translateY(0);
-		}
-	}
-
+  
 	/* Responsive */
 	@media (max-width: 768px) {
-		.container {
-			width: 90%;
-			padding: 1.5rem !important;
-		}
-
-		.title {
-			font-size: 2rem;
-		}
+	  .driver-form {
+		grid-template-columns: 1fr;
+	  }
+	  
+	  .form-check,
+	  .btn-submit {
+		grid-column: span 1;
+	  }
+	  
+	  .container.text-center {
+		padding: 30px 20px;
+	  }
+	  
+	  .title {
+		font-size: 1.8rem;
+	  }
+	  
+	  .subtitle {
+		font-size: 1rem;
+	  }
 	}
-</style>
+  
+	@media (max-width: 480px) {
+	  .wrapper {
+		padding: 10px;
+	  }
+	  
+	  .container.text-center {
+		padding: 25px 15px;
+	  }
+	  
+	  .title {
+		font-size: 1.5rem;
+	  }
+	}
+  </style>
