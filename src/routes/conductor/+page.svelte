@@ -1,110 +1,116 @@
 <script lang="ts">
-	import { supabase } from '../../components/supabase';
-	import { goto } from '$app/navigation';
-	
-	type ConductorData = {
-	  id?: string;
-	  user_id: string;
-	  nombre: string;
-	  placa: string;
-	  licencia: string;
-	  propiedad: string;
-	  control: string;
-	  marca: string;
-	  email: string;
-	  telefono: string;
-	  acepta_terminos: boolean;
-	  created_at?: string;
-	};
+    import { supabase } from '../../components/supabase';
+    import { goto } from '$app/navigation';
+    
+    type ConductorData = {
+      id?: string;
+      user_id: string;
+      nombre: string;
+      placa: string;
+      licencia: string;
+      propiedad: string;
+      control: string;
+      marca: string;
+      email: string;
+      telefono: string;
+      acepta_terminos: boolean;
+      created_at?: string;
+    };
   
-	let nombre = '';
-	let password = '';
-	let placa = '';
-	let licencia = '';
-	let propiedad = '';
-	let control = '';
-	let email = '';
-	let telefono = '';
-	let marca = '';
-	let aceptaTerminos = false;
-	let showPassword = false;
-	let errorMessage = '';
-	let isLoading = false;
-	
-	function togglePassword() {
-	  showPassword = !showPassword;
-	}
-	
-	async function handleSubmit() {
-	  // Validaciones iniciales
-	  if (!aceptaTerminos) {
-		errorMessage = 'Debes aceptar los términos y condiciones';
-		return;
-	  }
+    let nombre = '';
+    let password = '';
+    let placa = '';
+    let licencia = '';
+    let propiedad = '';
+    let control = '';
+    let email = '';
+    let telefono = '';
+    let marca = '';
+    let aceptaTerminos = false;
+    let showPassword = false;
+    let errorMessage = '';
+    let isLoading = false;
+    
+    function togglePassword() {
+      showPassword = !showPassword;
+    }
+
+    async function handleSubmit() {
+      // Validaciones iniciales
+      if (!aceptaTerminos) {
+        errorMessage = 'Debes aceptar los términos y condiciones';
+        return;
+      }
   
-	  if (password.length < 8) {
-		errorMessage = 'La contraseña debe tener al menos 8 caracteres';
-		return;
-	  }
+      if (password.length < 8) {
+        errorMessage = 'La contraseña debe tener al menos 8 caracteres';
+        return;
+      }
+
+      // Asegurar que los valores son cadenas antes de usar trim()
+      const emailTrimmed = email?.toString().trim() || '';
+      const passwordTrimmed = password?.toString().trim() || '';
+      const nombreTrimmed = nombre?.toString().trim() || '';
+      const placaTrimmed = placa?.toString().trim().toUpperCase() || '';
+      const licenciaTrimmed = licencia?.toString().trim() || '';
+      const propiedadTrimmed = propiedad?.toString().trim() || '';
+      const controlTrimmed = control?.toString().trim() || '';
+      const marcaTrimmed = marca?.toString().trim() || '';
+      const telefonoTrimmed = telefono?.toString().trim() || '';
+
+      isLoading = true;
+      errorMessage = '';
+      
+      try {
+        // 1️⃣ **Registrar al usuario en Supabase Auth**
+        const { data: authData, error: authError } = await supabase.auth.signUp({
+          email: emailTrimmed,
+          password: passwordTrimmed
+        });
+
+        if (authError) throw new Error(authError.message);
+        const userId = authData?.user?.id;
+
+        // 2️⃣ **Llamar a la función `create_conductor` después del registro exitoso**
+        const { data: transactionData, error: transactionError } = await supabase.rpc('create_conductor', {
+          p_nombre: nombreTrimmed,
+          p_placa: placaTrimmed,
+          p_licencia: licenciaTrimmed,
+          p_propiedad: propiedadTrimmed,
+          p_control: controlTrimmed,
+          p_marca: marcaTrimmed,
+          p_email: emailTrimmed,
+          p_telefono: telefonoTrimmed,
+          p_acepta_terminos: aceptaTerminos
+        });
+
+        if (transactionError) throw transactionError;
+
+        // 3️⃣ **Si todo salió bien, redirigir**
+        goto('/auth');
   
-	  isLoading = true;
-	  errorMessage = '';
-	  
-	  try {
-		// 1. Primero verificar si el email ya existe
-		const { data: existingUser, error: emailError } = await supabase
-		  .from('conductor')
-		  .select('email')
-		  .eq('email', email.toLowerCase().trim())
-		  .single();
-
-		if (existingUser) {
-		  throw new Error('Este email ya está registrado');
-		}
-
-		// 2. Crear el usuario en Auth dentro de una transacción
-		let authData;
-		let authError;
-
-		// Usamos una transacción para asegurar atomicidad
-		const { data: transactionData, error: transactionError } = await supabase.rpc('create_conductor', {
-		  p_email: email,
-		  p_password: password,
-		  p_nombre: nombre.trim(),
-		  p_placa: placa.trim().toUpperCase(),
-		  p_licencia: licencia.trim(),
-		  p_propiedad: propiedad,
-		  p_control: control.toString().trim(),
-		  p_marca: marca.trim(),
-		  p_telefono: telefono.toString().trim(),
-		  p_acepta_terminos: aceptaTerminos
-		});
-
-		if (transactionError) throw transactionError;
-
-		// 3. Si todo salió bien, redirigir
-		goto('/auth');
-  
-	  } catch (error: unknown) {
-		// Manejo seguro del error
-		if (error instanceof Error) {
-		  errorMessage = error.message;
-		  
-		  if (error.message.includes('User already registered') || error.message.includes('email ya está registrado')) {
-			errorMessage = 'Este email ya está registrado';
-		  } else if (error.message.includes('password')) {
-			errorMessage = 'La contraseña no cumple los requisitos';
-		  }
-		} else {
-		  errorMessage = 'Ocurrió un error inesperado';
-		}
-		
-		console.error('Error en registro:', error);
-	  } finally {
-		isLoading = false;
-	  }
-	}
+      } catch (error: unknown) {
+        // Manejo seguro del error
+        if (error instanceof Error) {
+          errorMessage = error.message;
+          
+          if (error.message.includes('User already registered') || error.message.includes('email ya está registrado')) {
+            errorMessage = 'Este email ya está registrado';
+          } else if (error.message.includes('password')) {
+            errorMessage = 'La contraseña no cumple los requisitos';
+          }
+        } else {
+          errorMessage = 'Ocurrió un error inesperado';
+        }
+        
+        console.error('Error en registro:', error);
+      } finally {
+        isLoading = false;
+      }
+    }
 </script>
+
+
 
   <div class="wrapper">
 	<div class="scroll-container">
