@@ -1,603 +1,462 @@
 <script lang="ts">
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount, onDestroy, afterUpdate } from 'svelte';
 	import { writable } from 'svelte/store';
 	import { supabase } from '../../../components/supabase';
+	import { browser } from '$app/environment';
 	import Lock from '../../../components/lock.svelte';
-	import type { Session, Subscription } from '@supabase/supabase-js';
-	import { protegerRuta } from '../../../components/protegerRuta';
-	import Turnosasignados from '../../../components/turnosasignados.svelte';
-	import Estado from '../../../components/estado.svelte';
+	
 	
 
-	type Conductor = {
-		id: number;
-		nombre: string;
-		placa: string;
-		email: string;
-		control: string;
-		propiedad: string;
-		telefono?: string | null;
-	};
+	type EstadoViaje =
+		| 'sin_servicio'
+		| 'en_servicio'
+		| 'en_viaje_ureña'
+		| 'en_viaje_colón'
+		| 'viaje_finalizado';
 
-	type EstadoPosible =
-		| 'en_servicio_colon'
-		| 'en_servicio_ureña'
-		| 'en_ruta_colon_ureña'
-		| 'en_ruta_ureña_colon'
-		| 'accidentado'
-		| 'descanso';
-
-	// Stores
-	const conductor = writable<Conductor | null>(null);
-	const estadoActual = writable<EstadoPosible>('descanso');
+	const estadoActual = writable<EstadoViaje>(
+		browser ? (localStorage.getItem('taxiEstado') as EstadoViaje) || 'sin_servicio' : 'sin_servicio'
+	);
+	const tiempoTranscurrido = writable<number>(0);
 	const error = writable<string>('');
 	const isLoading = writable<boolean>(false);
-	const session = writable<Session | null>(null);
 
-	let sessionValue: Session | null = null;
-	session.subscribe((value) => (sessionValue = value));
+	let intervalo: NodeJS.Timeout | null = null;
+	let inicioTimestamp: number | null = browser
+		? Number(localStorage.getItem('cronometro')) || null
+		: null;
+	let conductor_id: number | null = null;
+	let destinoActual: 'ureña' | 'colón' | null = null;
 
-	let conductorData: Conductor | null = null;
-	conductor.subscribe((value) => (conductorData = value));
-
-	let currentEstado: EstadoPosible = 'descanso';
-	estadoActual.subscribe((value) => (currentEstado = value));
-
-	onMount(async () => {
-    protegerRuta();
-
-    try {
-        const { data: authSession } = await supabase.auth.getSession();
-        if (authSession.session) {
-            session.set(authSession.session);
-            console.log("Sesión almacenada correctamente:", authSession.session);
-            await obtenerConductor(); // Cargar datos solo al iniciar la sesión
-        } else {
-            console.log("No se encontró una sesión activa.");
-        }
-    } catch (err) {
-        manejarError(err, "Error al obtener la sesión inicial");
-    }
-});
-
-	// Función para manejar errores
-	const manejarError = (err: unknown, mensaje: string) => {
-		console.error(mensaje, err);
-		error.set(err instanceof Error ? err.message : mensaje);
-	};
-
-	const obtenerConductor = async (): Promise<boolean> => {
-		isLoading.set(true);
-		error.set('');
-
+	const obtenerConductorId = async () => {
 		try {
-			const email = sessionValue?.user?.email;
-			if (!email) throw new Error('No hay usuario autenticado');
+			const { data: sessionData } = await supabase.auth.getSession();
+			if (!sessionData.session?.user?.email) throw new Error('No hay sesión activa.');
 
 			const { data, error: sbError } = await supabase
 				.from('conductor')
-				.select('*')
-				.eq('email', email)
+				.select('id')
+				.eq('email', sessionData.session.user.email)
 				.single();
 
-			if (sbError || !data) throw sbError ?? new Error('Conductor no encontrado');
+			if (sbError || !data) throw new Error('Conductor no encontrado en la base de datos.');
 
-			console.log('Conductor obtenido correctamente:', data);
-			conductor.set(data);
-			await obtenerUltimoEstado(data.id);
-			return true;
+			conductor_id = data.id;
+			console.log('✅ Conductor ID obtenido:', conductor_id);
 		} catch (err) {
-			manejarError(err, 'Error al cargar datos del conductor');
-			conductor.set(null);
-			return false;
-		} finally {
-			isLoading.set(false);
-			console.log('Estado de carga actualizado:', $isLoading);
+			error.set(`🚨 Error: ${err instanceof Error ? err.message : 'Problema desconocido'}`);
 		}
 	};
 
-	const obtenerUltimoEstado = async (conductorId: number): Promise<void> => {
+	onMount(async () => {
+		await obtenerConductorId();
+
+		if (inicioTimestamp) {
+			intervalo = setInterval(actualizarCronometro, 1000);
+			actualizarCronometro();
+		}
+	});
+
+	afterUpdate(() => {
+		if (browser) localStorage.setItem('taxiEstado', $estadoActual);
+	});
+
+	const iniciarServicio = () => {
+		estadoActual.set('en_servicio');
+		destinoActual = null; // 🔹 Limpiar el destino al iniciar nuevo servicio
+	};
+
+	const iniciarViaje = (destino: 'ureña' | 'colón') => {
+		if (!destino) {
+			error.set('🚨 No se recibió un destino válido.');
+			return;
+		}
+
+		inicioTimestamp = Date.now();
+		destinoActual = destino; // ✅ Ahora siempre se asigna correctamente
+
+		console.log('✅ Viaje iniciado hacia:', destinoActual);
+
+		if (browser) localStorage.setItem('cronometro', String(inicioTimestamp));
+
+		intervalo = setInterval(actualizarCronometro, 1000);
+		estadoActual.set(destino === 'ureña' ? 'en_viaje_ureña' : 'en_viaje_colón');
+	};
+
+	const actualizarCronometro = () => {
+		if (inicioTimestamp) {
+			tiempoTranscurrido.set(Math.floor((Date.now() - inicioTimestamp!) / 1000));
+		}
+	};
+
+	const finalizarViaje = async () => {
+		if (!conductor_id) {
+			error.set('🚨 No se pudo obtener conductor_id.');
+			return;
+		}
+
+		if (!destinoActual) {
+			error.set('🚨 No se puede finalizar el viaje porque `destinoActual` es undefined.');
+			console.error('🚨 Error: destinoActual no está definido.');
+			return;
+		}
+
+		console.log('✅ Finalizando viaje hacia:', destinoActual);
+
+		if (intervalo) clearInterval(intervalo);
+
+		const tiempoTotal = Math.floor((Date.now() - inicioTimestamp!) / 1000);
+		if (browser) localStorage.removeItem('cronometro');
+
+		tiempoTranscurrido.set(0);
+		estadoActual.set('viaje_finalizado');
+
 		try {
-			const { data, error: sbError } = await supabase
-				.from('estado_conductor')
-				.select('estado')
-				.eq('conductor_id', conductorId)
-				.order('created_at', { ascending: false })
-				.limit(1)
-				.maybeSingle();
+			const { error: dbError } = await supabase.from('viajes').insert({
+				conductor_id,
+				destino: destinoActual,
+				estado: 'finalizado',
+				hora_inicio: new Date(inicioTimestamp!).toISOString(),
+				hora_fin: new Date().toISOString(),
+				duracion_total: tiempoTotal
+			});
 
-			if (sbError) throw sbError;
-			estadoActual.set((data?.estado as EstadoPosible) ?? 'descanso');
+			if (dbError) throw dbError;
+			console.log('✅ Viaje registrado correctamente en Supabase.');
 		} catch (err) {
-			manejarError(err, 'Error al cargar estado actual');
-			estadoActual.set('descanso');
+			error.set('🚨 Error al registrar el viaje.');
 		}
 	};
 
-	const cambiarEstado = async (
-		nuevoEstado: EstadoPosible,
-		descripcion: string = ''
-	): Promise<void> => {
-		isLoading.set(true);
-
-		try {
-			if (!conductorData?.id) throw new Error('No hay datos del conductor');
-
-			const { data: ultimoEstado, error: queryError } = await supabase
-				.from('estado_conductor')
-				.select('id')
-				.eq('conductor_id', conductorData.id)
-				.order('created_at', { ascending: false })
-				.limit(1)
-				.maybeSingle();
-
-			if (queryError) throw queryError;
-
-			if (ultimoEstado?.id) {
-				const { error: updateError } = await supabase
-					.from('estado_conductor')
-					.update({ estado: nuevoEstado, descripcion })
-					.eq('id', ultimoEstado.id);
-				if (updateError) throw updateError;
-			} else {
-				const { error: insertError } = await supabase
-					.from('estado_conductor')
-					.insert({
-						conductor_id: conductorData.id,
-						estado: nuevoEstado,
-						descripcion,
-						created_at: new Date().toISOString()
-					});
-				if (insertError) throw insertError;
-			}
-
-			estadoActual.set(nuevoEstado);
-			error.set(`✅ Estado actualizado: ${nuevoEstado}`);
-			setTimeout(() => error.set(''), 3000);
-		} catch (err) {
-			manejarError(err, 'Error al actualizar estado');
-			setTimeout(() => error.set(''), 5000);
-		} finally {
-			isLoading.set(false);
-		}
-	};
+	onDestroy(() => intervalo && clearInterval(intervalo));
 </script>
 
-<div class="dashboard-container">
-	<nav class="dashboard-nav">
-		<div class="nav-user">
-			{#if sessionValue}
-				{#if conductorData}
-					<div class="badge-container">
-						<span class="user-badge">Control: {conductorData.control}</span>
-						<span class="user-badge">{conductorData.propiedad}: {conductorData.nombre}</span>
-						<span class="user-badge">Placa: {conductorData.placa}</span>
-						<a href="/auth/dashboard-conductor/maps" class="user-badge">Mapa</a>
-						<a href="/pasajeros" class="user-badge">Pasajeros</a>
-						<Lock />
-					</div>
-				{:else}
-					<span class="user-name">No autenticado</span>
-					<a href="/auth/login" class="login-link">Iniciar sesión</a>
-				{/if}
+
+
+<div class="taxi-dashboard">
+	<!-- Barra superior con botones -->
+	<div class="control-bar">
+	  <a href="/auth/dashboard-conductor/maps" class="control-btn map-btn">
+		<i class="fas fa-map-marked-alt"></i> Mapa
+	  </a>
+	  <a href="/pasajeros" class="control-btn passengers-btn">
+		<i class="fas fa-users"></i> Pasajeros
+	  </a>
+	  <button class="control-btn lock-btn">
+		<Lock />
+	  </button>
+	</div>
+  
+	<!-- Contenido centrado -->
+	<div class="main-content">
+	  <div class="status-card">
+		<h1 class="title">🚕 Estado del Servicio de Taxi</h1>
+  
+		{#if $error}
+		  <div class="error-message">{$error}</div>
+		{/if}
+  
+		<div class="status-display {$estadoActual}">
+		  <div class="status-icon">
+			{#if $estadoActual === 'sin_servicio'}
+			  <i class="fas fa-pause-circle"></i>
+			{:else if $estadoActual === 'en_servicio'}
+			  <i class="fas fa-sync-alt"></i>
+			{:else if $estadoActual === 'en_viaje_ureña'}
+			  <i class="fas fa-car-side"></i>
+			{:else if $estadoActual === 'en_viaje_colón'}
+			  <i class="fas fa-car-side"></i>
+			{:else if $estadoActual === 'viaje_finalizado'}
+			  <i class="fas fa-check-circle"></i>
 			{/if}
+		  </div>
+		  
+		  <div class="status-text">
+			{#if $estadoActual === 'sin_servicio'}
+			  <p>Servicio inactivo</p>
+			{:else if $estadoActual === 'en_servicio'}
+			  <p>En espera de viaje</p>
+			{:else if $estadoActual === 'en_viaje_ureña'}
+			  <p>En viaje a Ureña</p>
+			{:else if $estadoActual === 'en_viaje_colón'}
+			  <p>En viaje a Colón</p>
+			{:else if $estadoActual === 'viaje_finalizado'}
+			  <p>Viaje completado</p>
+			{/if}
+		  </div>
 		</div>
-	</nav>
-
-	<main class="dashboard-content">
-		<div class="content-wrapper">
-			{#if $isLoading}
-				<div class="loading-overlay">
-					<div class="spinner"></div>
-					<p>Cargando datos...</p>
-				</div>
-			{:else if conductorData}
-				<div class="info-panel">
-					<div class="info-header">
-						<h2>Estado Actual</h2>
-						<div class="status-badge {currentEstado.toLowerCase().replace(' ', '-')}">
-							{currentEstado}
-						</div>
-					</div>
-					<div class="info-grid">
-						<div class="info-item">
-							<span class="info-label">Nombre:</span>
-							<span>{conductorData.nombre}</span>
-						</div>
-						<div class="info-item">
-							<span class="info-label">Placa:</span>
-							<span>{conductorData.placa}</span>
-						</div>
-						<div class="info-item">
-							<span class="info-label">Teléfono:</span>
-							<span>{conductorData.telefono || 'N/A'}</span>
-						</div>
-					</div>
-				</div>
-
-				<div>
-					<Estado/>
-				</div>
-
-				<div>
-					<Turnosasignados />
-				</div>
-
-				<div class="actions-panel">
-					<h3>Cambiar Estado</h3>
-					<div class="actions-grid">
-						<button
-							type="button"
-							on:click={() => cambiarEstado('en_servicio_colon', 'Ubicación: Colón')}
-							class="action-btn service"
-						>
-							<span class="icon">🚕</span>
-							<span class="label">En Servicio Colón</span>
-						</button>
-
-						<button
-							type="button"
-							on:click={() => cambiarEstado('en_servicio_ureña', 'Ubicación: Ureña')}
-							class="action-btn service"
-						>
-							<span class="icon">🚕</span>
-							<span class="label">En Servicio Ureña</span>
-						</button>
-
-						<button
-							type="button"
-							on:click={() => cambiarEstado('descanso')}
-							class="action-btn rest"
-						>
-							<span class="icon">🛌</span>
-							<span class="label">Descanso</span>
-						</button>
-
-						<button
-							type="button"
-							on:click={() => cambiarEstado('en_ruta_colon_ureña', 'Ruta: Colón → Ureña')}
-							class="action-btn route"
-						>
-							<span class="icon">🛣️</span>
-							<span class="label">Colón → Ureña</span>
-						</button>
-
-						<button
-							type="button"
-							on:click={() => cambiarEstado('en_ruta_ureña_colon', 'Ruta: Ureña → Colón')}
-							class="action-btn route"
-						>
-							<span class="icon">🛣️</span>
-							<span class="label">Ureña → Colón</span>
-						</button>
-
-						<button
-							type="button"
-							on:click={() => cambiarEstado('accidentado')}
-							class="action-btn accident"
-						>
-							<span class="icon">⚠️</span>
-							<span class="label">Accidentado</span>
-						</button>
-					</div>
-				</div>
-			{:else}
-				<div class="empty-state">
-					<h2>No se encontraron datos del conductor</h2>
-					<p>Por favor, verifica tu conexión o contacta al administrador.</p>
-				</div>
-			{/if}
-
-			{#if $error}
-				<div class="notification {$error.includes('actualizado') ? 'success' : 'error'}">
-					{$error}
-					<button class="close-btn" on:click={() => error.set('')}>×</button>
-				</div>
-			{/if}
+  
+		<div class="timer-container" class:visible={$estadoActual.startsWith('en_viaje')}>
+		  <div class="timer">
+			<i class="fas fa-stopwatch"></i> Tiempo: {$tiempoTranscurrido} segundos
+		  </div>
 		</div>
-	</main>
-</div>
+	  </div>
+  
+	  <div class="action-buttons">
+		{#if $estadoActual === 'sin_servicio'}
+		  <button on:click={iniciarServicio} class="action-btn start-btn">
+			<i class="fas fa-play"></i> Iniciar Servicio
+		  </button>
+		{:else if $estadoActual === 'en_servicio'}
+		  <div class="trip-buttons">
+			<button on:click={() => iniciarViaje('ureña')} class="action-btn trip-btn">
+			  <i class="fas fa-road"></i> Viaje a Ureña
+			</button>
+			<button on:click={() => iniciarViaje('colón')} class="action-btn trip-btn">
+			  <i class="fas fa-road"></i> Viaje a Colón
+			</button>
+		  </div>
+		{:else if $estadoActual.startsWith('en_viaje')}
+		  <button on:click={finalizarViaje} class="action-btn end-btn">
+			<i class="fas fa-flag-checkered"></i> Finalizar Viaje
+		  </button>
+		{:else if $estadoActual === 'viaje_finalizado'}
+		  <button on:click={iniciarServicio} class="action-btn restart-btn">
+			<i class="fas fa-redo"></i> Nuevo Servicio
+		  </button>
+		{/if}
+	  </div>
+	</div>
+  </div>
 
 <style>
-	/* Estilos base */
-	:global(body) {
-		margin: 0;
-		padding: 0;
-		font-family: 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
-		color: #333;
-		height: 100vh;
-		overflow: hidden;
-		background-color: #f5f7fa;
-	}
+	.taxi-dashboard {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background-color: #f8f9fa;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
 
-	.dashboard-container {
-		display: flex;
-		flex-direction: column;
-		height: 100vh;
-	}
+/* Barra superior */
+.control-bar {
+  display: flex;
+  justify-content: flex-end;
+  padding: 15px 25px;
+  background-color: #2c3e50;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+}
 
-	/* Navbar fijo */
-	.dashboard-nav {
-		padding: 0.75rem 1.5rem;
-		background-color: #2c3e50;
-		color: white;
-		box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-		position: sticky;
-		top: 0;
-		z-index: 1000;
-	}
+.control-btn {
+  padding: 10px 15px;
+  margin-left: 10px;
+  border: none;
+  border-radius: 6px;
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-decoration: none;
+}
 
-	/* Contenido principal con scroll */
-	.dashboard-content {
-		flex: 1;
-		overflow-y: auto;
-		-webkit-overflow-scrolling: touch;
-		padding: 1rem;
-		background-color: #f5f7fa;
-	}
+.map-btn {
+  background-color: #3498db;
+}
 
-	.content-wrapper {
-		max-width: 1200px;
-		margin: 0 auto;
-		padding: 1rem;
-		box-sizing: border-box;
-	}
+.map-btn:hover {
+  background-color: #2980b9;
+}
 
-	/* Paneles */
-	.info-panel,
-	.actions-panel {
-		background: white;
-		border-radius: 10px;
-		padding: 1.5rem;
-		margin-bottom: 1.5rem;
-		box-shadow: 0 2px 15px rgba(0, 0, 0, 0.05);
-		border: 1px solid #eaeaea;
-	}
+.passengers-btn {
+  background-color: #9b59b6;
+}
 
-	.info-header {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		margin-bottom: 1.5rem;
-		border-bottom: 1px solid #eee;
-		padding-bottom: 1rem;
-	}
+.passengers-btn:hover {
+  background-color: #8e44ad;
+}
 
-	.info-grid {
-		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-		gap: 1rem;
-	}
+.lock-btn {
+  background-color: #7f8c8d;
+}
 
-	.info-item {
-		padding: 0.5rem 0;
-	}
+.lock-btn:hover {
+  background-color: #95a5a6;
+}
 
-	.info-label {
-		font-weight: 600;
-		color: #666;
-		display: inline-block;
-		min-width: 80px;
-	}
+/* Contenido principal */
+.main-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex-grow: 1;
+  padding: 30px;
+}
 
-	/* Estado */
-	.status-badge {
-		padding: 0.5rem 1rem;
-		border-radius: 20px;
-		font-size: 0.9rem;
-		font-weight: 600;
-		text-transform: uppercase;
-		letter-spacing: 0.5px;
-	}
+.status-card {
+  background-color: white;
+  border-radius: 12px;
+  padding: 30px;
+  width: 100%;
+  max-width: 500px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+  text-align: center;
+  margin-bottom: 30px;
+}
 
-	.status-badge.en-servicio {
-		background-color: #e3f9e5;
-		color: #28a745;
-	}
-	.status-badge.descanso {
-		background-color: #fff8e1;
-		color: #ffc107;
-	}
-	.status-badge.en-ruta {
-		background-color: #e3f2fd;
-		color: #1976d2;
-	}
-	.status-badge.accidentado {
-		background-color: #ffebee;
-		color: #dc3545;
-	}
+.title {
+  color: #2c3e50;
+  margin-bottom: 25px;
+  font-size: 24px;
+}
 
-	/* Acciones */
-	.actions-grid {
-		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-		gap: 1rem;
-		margin-top: 1.5rem;
-	}
+.status-display {
+  padding: 25px;
+  border-radius: 10px;
+  margin-bottom: 25px;
+  transition: all 0.3s ease;
+}
 
-	.action-btn {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		justify-content: center;
-		padding: 1.5rem 1rem;
-		border: none;
-		border-radius: 8px;
-		background-color: white;
-		cursor: pointer;
-		transition: all 0.3s ease;
-		box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
-	}
+.status-icon {
+  font-size: 60px;
+  margin-bottom: 15px;
+}
 
-	.action-btn:hover {
-		transform: translateY(-3px);
-		box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
-	}
+.status-text {
+  font-size: 20px;
+  font-weight: 600;
+}
 
-	.action-btn .icon {
-		font-size: 2rem;
-		margin-bottom: 0.5rem;
-	}
+.sin_servicio {
+  background-color: #fff3e0;
+  color: #e65100;
+}
 
-	.action-btn .label {
-		font-weight: 500;
-		text-align: center;
-	}
+.en_servicio {
+  background-color: #e3f2fd;
+  color: #0d47a1;
+}
 
-	.action-btn.service {
-		border: 2px solid #28a745;
-		color: #28a745;
-	}
-	.action-btn.rest {
-		border: 2px solid #ffc107;
-		color: #ffc107;
-	}
-	.action-btn.route {
-		border: 2px solid #1976d2;
-		color: #1976d2;
-	}
-	.action-btn.accident {
-		border: 2px solid #dc3545;
-		color: #dc3545;
-	}
+.en_viaje_ureña, .en_viaje_colón {
+  background-color: #e8f5e9;
+  color: #1b5e20;
+  animation: pulse 2s infinite;
+}
 
-	/* Notificación */
-	.notification {
-		position: fixed;
-		bottom: 2rem;
-		right: 2rem;
-		padding: 1rem 1.5rem;
-		border-radius: 8px;
-		color: white;
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		max-width: 400px;
-		box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-		animation: slideIn 0.3s ease-out;
-		z-index: 1000;
-	}
+.viaje_finalizado {
+  background-color: #efebe9;
+  color: #3e2723;
+}
 
-	.notification.success {
-		background-color: #28a745;
-	}
-	.notification.error {
-		background-color: #dc3545;
-	}
+.timer-container {
+  margin-top: 20px;
+  opacity: 0;
+  height: 0;
+  overflow: hidden;
+  transition: all 0.3s ease;
+}
 
-	.close-btn {
-		background: none;
-		border: none;
-		color: white;
-		font-size: 1.25rem;
-		cursor: pointer;
-		margin-left: 1rem;
-		padding: 0 0.5rem;
-	}
+.timer-container.visible {
+  opacity: 1;
+  height: auto;
+}
 
-	/* Loading */
-	.loading-overlay {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		justify-content: center;
-		min-height: 300px;
-	}
+.timer {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  background-color: #37474f;
+  color: white;
+  border-radius: 30px;
+  font-weight: 600;
+}
 
-	.spinner {
-		width: 50px;
-		height: 50px;
-		border: 5px solid #f3f3f3;
-		border-top: 5px solid #3498db;
-		border-radius: 50%;
-		animation: spin 1s linear infinite;
-		margin-bottom: 1rem;
-	}
+/* Botones de acción */
+.action-buttons {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  max-width: 500px;
+}
 
-	.empty-state {
-		text-align: center;
-		padding: 3rem;
-		color: #666;
-	}
+.action-btn {
+  padding: 15px 25px;
+  border: none;
+  border-radius: 8px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
 
-	/* Badges */
-	.badge-container {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.5rem;
-		justify-content: flex-end;
-		align-items: center;
-	}
+.start-btn {
+  background-color: #2ecc71;
+  color: white;
+}
 
-	.user-badge {
-		background-color: #3498db;
-		padding: 0.5rem 0.75rem;
-		border-radius: 20px;
-		font-size: 0.8rem;
-		white-space: nowrap;
-		color: white;
-		font-weight: 500;
-	}
+.start-btn:hover {
+  background-color: #27ae60;
+  transform: translateY(-2px);
+}
 
-	/* Animaciones */
-	@keyframes spin {
-		0% {
-			transform: rotate(0deg);
-		}
-		100% {
-			transform: rotate(360deg);
-		}
-	}
+.trip-buttons {
+  display: flex;
+  gap: 15px;
+  width: 100%;
+}
 
-	@keyframes slideIn {
-		from {
-			transform: translateX(100%);
-			opacity: 0;
-		}
-		to {
-			transform: translateX(0);
-			opacity: 1;
-		}
-	}
+.trip-btn {
+  flex: 1;
+  background-color: #3498db;
+  color: white;
+}
 
-	/* Responsive */
-	@media (max-width: 768px) {
-		.dashboard-nav {
-			padding: 0.75rem 1rem;
-		}
+.trip-btn:hover {
+  background-color: #2980b9;
+  transform: translateY(-2px);
+}
 
-		.content-wrapper {
-			padding: 0.5rem;
-		}
+.end-btn {
+  background-color: #e74c3c;
+  color: white;
+}
 
-		.info-panel,
-		.actions-panel {
-			padding: 1rem;
-		}
+.end-btn:hover {
+  background-color: #c0392b;
+  transform: translateY(-2px);
+}
 
-		.actions-grid {
-			grid-template-columns: 1fr 1fr;
-		}
+.restart-btn {
+  background-color: #f39c12;
+  color: white;
+}
 
-		.notification {
-			bottom: 1rem;
-			right: 1rem;
-			left: 1rem;
-			max-width: none;
-		}
-	}
+.restart-btn:hover {
+  background-color: #d35400;
+  transform: translateY(-2px);
+}
 
-	@media (max-width: 480px) {
-		.actions-grid {
-			grid-template-columns: 1fr;
-		}
+.error-message {
+  padding: 15px;
+  background-color: #ffebee;
+  color: #c62828;
+  border-radius: 6px;
+  margin-bottom: 20px;
+  font-weight: 600;
+}
 
-		.info-grid {
-			grid-template-columns: 1fr;
-		}
+@keyframes pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(46, 204, 113, 0.4);
+  }
+  70% {
+    box-shadow: 0 0 0 15px rgba(46, 204, 113, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(46, 204, 113, 0);
+  }
+}
 
-		.badge-container {
-			justify-content: center;
-		}
-	}
+/* Iconos de Font Awesome */
+.fas {
+  font-size: 18px;
+}
 </style>

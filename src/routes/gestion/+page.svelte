@@ -9,6 +9,8 @@
 	import Turnos from '../../components/turnos.svelte';
 	import ProtectedArea from '../../components/ProtectedArea.svelte';
 	import Comentarios from '../../components/comentarios.svelte';
+	import UltimosUrena from '../../components/ultimosUrena.svelte';
+	
 	
 	
 	
@@ -116,6 +118,9 @@
 				</div>
 				<div class="card-body">
 					<Estado />
+				</div>
+				<div class="card-body">
+					<UltimosUrena />
 				</div>
 			</div>
 		</div>
