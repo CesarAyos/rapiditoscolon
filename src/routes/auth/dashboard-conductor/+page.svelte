@@ -1,135 +1,171 @@
 <script lang="ts">
-	import { onMount, onDestroy, afterUpdate } from 'svelte';
-	import { writable } from 'svelte/store';
-	import { supabase } from '../../../components/supabase';
-	import { browser } from '$app/environment';
-	import Lock from '../../../components/lock.svelte';
-	
-	
+    import { onMount, onDestroy, afterUpdate } from 'svelte';
+    import { writable } from 'svelte/store';
+    import { supabase } from '../../../components/supabase';
+    import { browser } from '$app/environment';
+    import Lock from '../../../components/lock.svelte';
+    import  { DateTime } from 'luxon';
 
-	type EstadoViaje =
-		| 'sin_servicio'
-		| 'en_servicio'
-		| 'en_viaje_ureña'
-		| 'en_viaje_colón'
-		| 'viaje_finalizado';
 
-	const estadoActual = writable<EstadoViaje>(
-		browser ? (localStorage.getItem('taxiEstado') as EstadoViaje) || 'sin_servicio' : 'sin_servicio'
-	);
-	const tiempoTranscurrido = writable<number>(0);
-	const error = writable<string>('');
-	const isLoading = writable<boolean>(false);
+    type EstadoViaje =
+        | 'sin_servicio'
+        | 'en_servicio'
+        | 'en_viaje_ureña'
+        | 'en_viaje_colón'
+        | 'viaje_finalizado';
 
-	let intervalo: NodeJS.Timeout | null = null;
-	let inicioTimestamp: number | null = browser
-		? Number(localStorage.getItem('cronometro')) || null
-		: null;
-	let conductor_id: number | null = null;
-	let destinoActual: 'ureña' | 'colón' | null = null;
+    const estadoActual = writable<EstadoViaje>(
+        browser ? (localStorage.getItem('taxiEstado') as EstadoViaje) || 'sin_servicio' : 'sin_servicio'
+    );
+    const tiempoTranscurrido = writable<string>('0h 0m 0s');
+    const error = writable<string>('');
+    const isLoading = writable<boolean>(false);
 
-	const obtenerConductorId = async () => {
-		try {
-			const { data: sessionData } = await supabase.auth.getSession();
-			if (!sessionData.session?.user?.email) throw new Error('No hay sesión activa.');
+    let intervalo: NodeJS.Timeout | null = null;
+    let inicioTimestamp: number | null = browser
+        ? Number(localStorage.getItem('cronometro')) || null
+        : null;
+    let conductor_id: number | null = null;
+    let destinoActual: 'ureña' | 'colón' | null = null;
 
-			const { data, error: sbError } = await supabase
-				.from('conductor')
-				.select('id')
-				.eq('email', sessionData.session.user.email)
-				.single();
+    const obtenerConductorId = async () => {
+        try {
+            const { data: sessionData } = await supabase.auth.getSession();
+            if (!sessionData.session?.user?.email) throw new Error('No hay sesión activa.');
 
-			if (sbError || !data) throw new Error('Conductor no encontrado en la base de datos.');
+            const { data, error: sbError } = await supabase
+                .from('conductor')
+                .select('id')
+                .eq('email', sessionData.session.user.email)
+                .single();
 
-			conductor_id = data.id;
-			console.log('✅ Conductor ID obtenido:', conductor_id);
-		} catch (err) {
-			error.set(`🚨 Error: ${err instanceof Error ? err.message : 'Problema desconocido'}`);
-		}
-	};
+            if (sbError || !data) throw new Error('Conductor no encontrado en la base de datos.');
 
-	onMount(async () => {
-		await obtenerConductorId();
+            conductor_id = data.id;
+            console.log('✅ Conductor ID obtenido:', conductor_id);
+        } catch (err) {
+            error.set(`🚨 Error: ${err instanceof Error ? err.message : 'Problema desconocido'}`);
+        }
+    };
 
-		if (inicioTimestamp) {
-			intervalo = setInterval(actualizarCronometro, 1000);
-			actualizarCronometro();
-		}
-	});
+    onMount(async () => {
+        await obtenerConductorId();
 
-	afterUpdate(() => {
-		if (browser) localStorage.setItem('taxiEstado', $estadoActual);
-	});
+        if (inicioTimestamp) {
+            intervalo = setInterval(actualizarCronometro, 1000);
+            actualizarCronometro();
+        }
+    });
 
-	const iniciarServicio = () => {
-		estadoActual.set('en_servicio');
-		destinoActual = null; // 🔹 Limpiar el destino al iniciar nuevo servicio
-	};
+    afterUpdate(() => {
+        if (browser) localStorage.setItem('taxiEstado', $estadoActual);
+    });
 
-	const iniciarViaje = (destino: 'ureña' | 'colón') => {
-		if (!destino) {
-			error.set('🚨 No se recibió un destino válido.');
-			return;
-		}
+    const iniciarServicio = () => {
+        estadoActual.set('en_servicio');
+        destinoActual = null;
+    };
 
-		inicioTimestamp = Date.now();
-		destinoActual = destino; // ✅ Ahora siempre se asigna correctamente
+    const iniciarViaje = (destino: 'ureña' | 'colón') => {
+        if (!destino) {
+            error.set('🚨 No se recibió un destino válido.');
+            return;
+        }
 
-		console.log('✅ Viaje iniciado hacia:', destinoActual);
+        inicioTimestamp = Date.now();
+        destinoActual = destino;
 
-		if (browser) localStorage.setItem('cronometro', String(inicioTimestamp));
+        console.log('✅ Viaje iniciado hacia:', destinoActual);
 
-		intervalo = setInterval(actualizarCronometro, 1000);
-		estadoActual.set(destino === 'ureña' ? 'en_viaje_ureña' : 'en_viaje_colón');
-	};
+        if (browser) localStorage.setItem('cronometro', String(inicioTimestamp));
 
-	const actualizarCronometro = () => {
-		if (inicioTimestamp) {
-			tiempoTranscurrido.set(Math.floor((Date.now() - inicioTimestamp!) / 1000));
-		}
-	};
+        intervalo = setInterval(actualizarCronometro, 1000);
+        estadoActual.set(destino === 'ureña' ? 'en_viaje_ureña' : 'en_viaje_colón');
+    };
 
-	const finalizarViaje = async () => {
-		if (!conductor_id) {
-			error.set('🚨 No se pudo obtener conductor_id.');
-			return;
-		}
+    const actualizarCronometro = () => {
+        if (inicioTimestamp) {
+            const segundosTotales = Math.floor((Date.now() - inicioTimestamp!) / 1000);
+            const horas = Math.floor(segundosTotales / 3600);
+            const minutos = Math.floor((segundosTotales % 3600) / 60);
+            const segundos = segundosTotales % 60;
+            tiempoTranscurrido.set(`${horas}h ${minutos}m ${segundos}s`);
+        }
+    };
 
-		if (!destinoActual) {
-			error.set('🚨 No se puede finalizar el viaje porque `destinoActual` es undefined.');
-			console.error('🚨 Error: destinoActual no está definido.');
-			return;
-		}
+    const finalizarViaje = async () => {
+        if (!conductor_id) {
+            error.set('🚨 No se pudo obtener conductor_id.');
+            return;
+        }
 
-		console.log('✅ Finalizando viaje hacia:', destinoActual);
+        if (!destinoActual) {
+            error.set('🚨 No se puede finalizar el viaje porque `destinoActual` es undefined.');
+            console.error('🚨 Error: destinoActual no está definido.');
+            return;
+        }
 
-		if (intervalo) clearInterval(intervalo);
+        console.log('✅ Finalizando viaje hacia:', destinoActual);
 
-		const tiempoTotal = Math.floor((Date.now() - inicioTimestamp!) / 1000);
-		if (browser) localStorage.removeItem('cronometro');
+        if (intervalo) clearInterval(intervalo);
 
-		tiempoTranscurrido.set(0);
-		estadoActual.set('viaje_finalizado');
+        const tiempoTotal = Math.floor((Date.now() - inicioTimestamp!) / 1000);
+        if (browser) localStorage.removeItem('cronometro');
 
-		try {
-			const { error: dbError } = await supabase.from('viajes').insert({
-				conductor_id,
-				destino: destinoActual,
-				estado: 'finalizado',
-				hora_inicio: new Date(inicioTimestamp!).toISOString(),
-				hora_fin: new Date().toISOString(),
-				duracion_total: tiempoTotal
-			});
+        tiempoTranscurrido.set('0h 0m 0s');
+        estadoActual.set('viaje_finalizado');
 
-			if (dbError) throw dbError;
-			console.log('✅ Viaje registrado correctamente en Supabase.');
-		} catch (err) {
-			error.set('🚨 Error al registrar el viaje.');
-		}
-	};
+        // 🔹 Obtener la hora de inicio y fin en Caracas
+        const horaInicioCaracas = DateTime.fromMillis(inicioTimestamp!, { zone: 'America/Caracas' }).toISO();
+        const horaFinCaracas = DateTime.now().setZone('America/Caracas').toISO();
 
-	onDestroy(() => intervalo && clearInterval(intervalo));
+        try {
+            // 🔍 Verificar si ya existe un viaje activo para el conductor
+            const { data: viajeExistente, error: consultaError } = await supabase
+                .from('viajes')
+                .select('id')
+                .eq('conductor_id', conductor_id)
+                .neq('estado', 'finalizado')
+                .maybeSingle();
+
+            if (consultaError) throw consultaError;
+
+            if (viajeExistente) {
+                // 🔄 Actualizar el viaje existente
+                const { error: updateError } = await supabase
+                    .from('viajes')
+                    .update({
+                        estado: 'finalizado',
+                        hora_fin: horaFinCaracas,
+                        duracion_total: tiempoTotal
+                    })
+                    .eq('id', viajeExistente.id);
+
+                if (updateError) throw updateError;
+                console.log('✅ Viaje actualizado correctamente.');
+            } else {
+                // 🆕 Insertar un nuevo viaje si no existe uno activo
+                const { error: insertError } = await supabase.from('viajes').insert({
+                    conductor_id,
+                    destino: destinoActual,
+                    estado: 'finalizado',
+                    hora_inicio: horaInicioCaracas,
+                    hora_fin: horaFinCaracas,
+                    duracion_total: tiempoTotal
+                });
+
+                if (insertError) throw insertError;
+                console.log('✅ Viaje registrado correctamente en Supabase.');
+            }
+        } catch (err) {
+            error.set('🚨 Error al registrar/actualizar el viaje.');
+        }
+    };
+
+    onDestroy(() => intervalo && clearInterval(intervalo));
 </script>
+
+
 
 
 
