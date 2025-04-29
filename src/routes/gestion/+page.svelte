@@ -10,10 +10,9 @@
 	import ProtectedArea from '../../components/ProtectedArea.svelte';
 	import Comentarios from '../../components/comentarios.svelte';
 	import UltimosUrena from '../../components/ultimosUrena.svelte';
-	
-	
-	
-	
+	import CombustibleControl from '../../components/CombustibleControl.svelte';
+	import Parrilla from '../../components/parrilla.svelte';
+		
 
 	onMount(() => {
 		protegerRuta();
@@ -121,6 +120,12 @@
 				</div>
 				<div class="card-body">
 					<UltimosUrena />
+				</div>
+				<div class="card-body">
+					<CombustibleControl />
+				</div>
+				<div class="card-body">
+					<Parrilla />
 				</div>
 			</div>
 		</div>

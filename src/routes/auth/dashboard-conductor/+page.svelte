@@ -1,170 +1,189 @@
 <script lang="ts">
-    import { onMount, onDestroy, afterUpdate } from 'svelte';
-    import { writable } from 'svelte/store';
-    import { supabase } from '../../../components/supabase';
-    import { browser } from '$app/environment';
-    import Lock from '../../../components/lock.svelte';
-    import  { DateTime } from 'luxon';
+  import { onMount, onDestroy, afterUpdate } from 'svelte';
+  import { writable } from 'svelte/store';
+  import { supabase } from '../../../components/supabase';
+  import { browser } from '$app/environment';
+  import { DateTime } from 'luxon';
+	
+  
+	
+  
 
+  type EstadoViaje =
+    | 'sin_servicio'
+    | 'en_servicio'
+    | 'en_viaje_ureña'
+    | 'en_viaje_colón'
+    | 'viaje_finalizado'
+    | 'en_parrilla'
+    | 'surtiendo_combustible'
+    | 'llegando_de_surtir';
 
-    type EstadoViaje =
-        | 'sin_servicio'
-        | 'en_servicio'
-        | 'en_viaje_ureña'
-        | 'en_viaje_colón'
-        | 'viaje_finalizado';
+  const estadoActual = writable<EstadoViaje>(
+    browser ? (localStorage.getItem('taxiEstado') as EstadoViaje) || 'sin_servicio' : 'sin_servicio'
+  );
 
-    const estadoActual = writable<EstadoViaje>(
-        browser ? (localStorage.getItem('taxiEstado') as EstadoViaje) || 'sin_servicio' : 'sin_servicio'
-    );
-    const tiempoTranscurrido = writable<string>('0h 0m 0s');
-    const error = writable<string>('');
-    const isLoading = writable<boolean>(false);
+  const tiempoTranscurrido = writable<string>('0h 0m 0s');
+  const error = writable<string>('');
+  const isLoading = writable<boolean>(false);
 
-    let intervalo: NodeJS.Timeout | null = null;
-    let inicioTimestamp: number | null = browser
-        ? Number(localStorage.getItem('cronometro')) || null
-        : null;
-    let conductor_id: number | null = null;
-    let destinoActual: 'ureña' | 'colón' | null = null;
+  let intervalo: NodeJS.Timeout | null = null;
+  let inicioTimestamp: number | null = browser
+      ? Number(localStorage.getItem('cronometro')) || null
+      : null;
+  let conductor_id: number | null = null;
+  let destinoActual: 'ureña' | 'colón' | null = null;
 
-    const obtenerConductorId = async () => {
-        try {
-            const { data: sessionData } = await supabase.auth.getSession();
-            if (!sessionData.session?.user?.email) throw new Error('No hay sesión activa.');
+  const obtenerConductorId = async () => {
+      try {
+          const { data: sessionData } = await supabase.auth.getSession();
+          if (!sessionData.session?.user?.email) throw new Error('No hay sesión activa.');
 
-            const { data, error: sbError } = await supabase
-                .from('conductor')
-                .select('id')
-                .eq('email', sessionData.session.user.email)
-                .single();
+          const { data, error: sbError } = await supabase
+              .from('conductor')
+              .select('id')
+              .eq('email', sessionData.session.user.email)
+              .single();
 
-            if (sbError || !data) throw new Error('Conductor no encontrado en la base de datos.');
+          if (sbError || !data) throw new Error('Conductor no encontrado en la base de datos.');
 
-            conductor_id = data.id;
-            console.log('✅ Conductor ID obtenido:', conductor_id);
-        } catch (err) {
-            error.set(`🚨 Error: ${err instanceof Error ? err.message : 'Problema desconocido'}`);
-        }
-    };
+          conductor_id = data.id;
+          console.log('✅ Conductor ID obtenido:', conductor_id);
+      } catch (err) {
+          error.set(`🚨 Error: ${err instanceof Error ? err.message : 'Problema desconocido'}`);
+      }
+  };
 
-    onMount(async () => {
-        await obtenerConductorId();
+  const actualizarCronometro = () => {
+    if (inicioTimestamp) {
+        const segundosTotales = Math.floor((Date.now() - inicioTimestamp) / 1000);
+        const horas = Math.floor(segundosTotales / 3600);
+        const minutos = Math.floor((segundosTotales % 3600) / 60);
+        const segundos = segundosTotales % 60;
+        tiempoTranscurrido.set(`${horas}h ${minutos}m ${segundos}s`);
+    }
+  };
 
-        if (inicioTimestamp) {
-            intervalo = setInterval(actualizarCronometro, 1000);
-            actualizarCronometro();
-        }
-    });
+  const iniciarServicio = () => {
+      estadoActual.set('en_servicio');
+      destinoActual = null;
+  };
 
-    afterUpdate(() => {
-        if (browser) localStorage.setItem('taxiEstado', $estadoActual);
-    });
+  onMount(async () => {
+      await obtenerConductorId();
 
-    const iniciarServicio = () => {
-        estadoActual.set('en_servicio');
-        destinoActual = null;
-    };
+      if (inicioTimestamp) {
+          intervalo = setInterval(actualizarCronometro, 1000);
+          actualizarCronometro();
+      }
+  });
 
-    const iniciarViaje = (destino: 'ureña' | 'colón') => {
-        if (!destino) {
-            error.set('🚨 No se recibió un destino válido.');
-            return;
-        }
+  afterUpdate(() => {
+      if (browser) localStorage.setItem('taxiEstado', $estadoActual);
+  });
 
-        inicioTimestamp = Date.now();
-        destinoActual = destino;
+  const actualizarEstado = async (nuevoEstado: EstadoViaje) => {
+      if (!conductor_id) {
+          error.set('🚨 No se pudo obtener conductor_id.');
+          return;
+      }
 
-        console.log('✅ Viaje iniciado hacia:', destinoActual);
+      const estadosBloqueados: EstadoViaje[] = ['en_viaje_ureña', 'en_viaje_colón'];
+      if (estadosBloqueados.includes($estadoActual) && 
+          (nuevoEstado === 'en_parrilla' || nuevoEstado === 'surtiendo_combustible' || nuevoEstado === 'llegando_de_surtir')) {
+          error.set(`🚨 No puedes cambiar a ${nuevoEstado} mientras estás en viaje.`);
+          return;
+      }
 
-        if (browser) localStorage.setItem('cronometro', String(inicioTimestamp));
+      const timestampCaracas = DateTime.now().setZone('America/Caracas').toISO();
 
-        intervalo = setInterval(actualizarCronometro, 1000);
-        estadoActual.set(destino === 'ureña' ? 'en_viaje_ureña' : 'en_viaje_colón');
-    };
+      try {
+          console.log(`🛠 Intentando actualizar estado: ${nuevoEstado} - Hora: ${timestampCaracas}`);
 
-    const actualizarCronometro = () => {
-        if (inicioTimestamp) {
-            const segundosTotales = Math.floor((Date.now() - inicioTimestamp!) / 1000);
-            const horas = Math.floor(segundosTotales / 3600);
-            const minutos = Math.floor((segundosTotales % 3600) / 60);
-            const segundos = segundosTotales % 60;
-            tiempoTranscurrido.set(`${horas}h ${minutos}m ${segundos}s`);
-        }
-    };
+          const { error: insertError } = await supabase.from('viajes').insert({
+              conductor_id,
+              estado: nuevoEstado,
+              hora_inicio: timestampCaracas
+          });
 
-    const finalizarViaje = async () => {
-        if (!conductor_id) {
-            error.set('🚨 No se pudo obtener conductor_id.');
-            return;
-        }
+          if (insertError) {
+              console.error('🚨 Error en Supabase:', insertError);
+              throw insertError;
+          }
 
-        if (!destinoActual) {
-            error.set('🚨 No se puede finalizar el viaje porque `destinoActual` es undefined.');
-            console.error('🚨 Error: destinoActual no está definido.');
-            return;
-        }
+          console.log(`✅ Estado actualizado a: ${nuevoEstado}`);
+          estadoActual.set(nuevoEstado);
+      } catch (err) {
+          error.set(`🚨 Error al actualizar estado: ${err instanceof Error ? err.message : 'Error desconocido'}`);
+      }
+  };
 
-        console.log('✅ Finalizando viaje hacia:', destinoActual);
+  const iniciarViaje = (destino: 'ureña' | 'colón') => {
+      if (!destino) {
+          error.set('🚨 No se recibió un destino válido.');
+          return;
+      }
 
-        if (intervalo) clearInterval(intervalo);
+      if ($estadoActual === 'surtiendo_combustible') {
+          error.set('🚨 No puedes iniciar un viaje mientras estás surtiendo combustible.');
+          return;
+      }
 
-        const tiempoTotal = Math.floor((Date.now() - inicioTimestamp!) / 1000);
-        if (browser) localStorage.removeItem('cronometro');
+      inicioTimestamp = Date.now();
+      destinoActual = destino;
 
-        tiempoTranscurrido.set('0h 0m 0s');
-        estadoActual.set('viaje_finalizado');
+      console.log('✅ Viaje iniciado hacia:', destinoActual);
 
-        // 🔹 Obtener la hora de inicio y fin en Caracas
-        const horaInicioCaracas = DateTime.fromMillis(inicioTimestamp!, { zone: 'America/Caracas' }).toISO();
-        const horaFinCaracas = DateTime.now().setZone('America/Caracas').toISO();
+      if (browser) localStorage.setItem('cronometro', String(inicioTimestamp));
 
-        try {
-            // 🔍 Verificar si ya existe un viaje activo para el conductor
-            const { data: viajeExistente, error: consultaError } = await supabase
-                .from('viajes')
-                .select('id')
-                .eq('conductor_id', conductor_id)
-                .neq('estado', 'finalizado')
-                .maybeSingle();
+      intervalo = setInterval(actualizarCronometro, 1000);
+      estadoActual.set(destino === 'ureña' ? 'en_viaje_ureña' : 'en_viaje_colón');
+  };
 
-            if (consultaError) throw consultaError;
+  const finalizarViaje = async () => {
+      if (!conductor_id || !destinoActual) {
+          error.set('🚨 No se puede finalizar el viaje.');
+          return;
+      }
 
-            if (viajeExistente) {
-                // 🔄 Actualizar el viaje existente
-                const { error: updateError } = await supabase
-                    .from('viajes')
-                    .update({
-                        estado: 'finalizado',
-                        hora_fin: horaFinCaracas,
-                        duracion_total: tiempoTotal
-                    })
-                    .eq('id', viajeExistente.id);
+      console.log('✅ Finalizando viaje hacia:', destinoActual);
 
-                if (updateError) throw updateError;
-                console.log('✅ Viaje actualizado correctamente.');
-            } else {
-                // 🆕 Insertar un nuevo viaje si no existe uno activo
-                const { error: insertError } = await supabase.from('viajes').insert({
-                    conductor_id,
-                    destino: destinoActual,
-                    estado: 'finalizado',
-                    hora_inicio: horaInicioCaracas,
-                    hora_fin: horaFinCaracas,
-                    duracion_total: tiempoTotal
-                });
+      if (intervalo) clearInterval(intervalo);
 
-                if (insertError) throw insertError;
-                console.log('✅ Viaje registrado correctamente en Supabase.');
-            }
-        } catch (err) {
-            error.set('🚨 Error al registrar/actualizar el viaje.');
-        }
-    };
+      const tiempoTotal = Math.floor((Date.now() - inicioTimestamp!) / 1000);
+      if (browser) localStorage.removeItem('cronometro');
 
-    onDestroy(() => intervalo && clearInterval(intervalo));
+      tiempoTranscurrido.set('0h 0m 0s');
+      estadoActual.set('viaje_finalizado');
+
+      const horaInicioCaracas = DateTime.fromMillis(inicioTimestamp!, { zone: 'America/Caracas' }).toISO();
+      const horaFinCaracas = DateTime.now().setZone('America/Caracas').toISO();
+
+      try {
+          const { error: insertError } = await supabase.from('viajes').insert({
+              conductor_id,
+              destino: destinoActual,
+              estado: 'finalizado',
+              hora_inicio: horaInicioCaracas,
+              hora_fin: horaFinCaracas,
+              duracion_total: tiempoTotal
+          });
+
+          if (insertError) throw insertError;
+          console.log('✅ Viaje registrado correctamente en Supabase.');
+      } catch (err) {
+          error.set(`🚨 Error al registrar/actualizar el viaje: ${err instanceof Error ? err.message : 'Error desconocido'}`);
+      }
+  };
+
+  const enParrilla = () => actualizarEstado('en_parrilla');
+  const surtiendoCombustible = () => actualizarEstado('surtiendo_combustible');
+  const llegandoDeSurtir = () => actualizarEstado('llegando_de_surtir');
+
+  onDestroy(() => {
+      if (intervalo) clearInterval(intervalo);
+  });
 </script>
-
 
 
 
@@ -172,125 +191,137 @@
 <div class="taxi-dashboard">
 	<!-- Barra superior con botones -->
 	<div class="control-bar">
-	  <a href="/auth/dashboard-conductor/maps" class="control-btn map-btn">
-		<i class="fas fa-map-marked-alt"></i> Mapa
-	  </a>
-	  <a href="/pasajeros" class="control-btn passengers-btn">
-		<i class="fas fa-users"></i> Pasajeros
-	  </a>
-	  <button class="control-btn lock-btn">
-		<Lock />
-	  </button>
+		<a href="/auth/dashboard-conductor/maps" class="control-btn map-btn">
+			<i class="fas fa-map-marked-alt"></i> Mapa
+		</a>
+		<a href="/pasajeros" class="control-btn passengers-btn">
+			<i class="fas fa-users"></i> Pasajeros
+		</a>
 	</div>
-  
+
 	<!-- Contenido centrado -->
 	<div class="main-content">
-	  <div class="status-card">
-		<h1 class="title">🚕 Estado del Servicio de Taxi</h1>
-  
-		{#if $error}
-		  <div class="error-message">{$error}</div>
-		{/if}
-  
-		<div class="status-display {$estadoActual}">
-		  <div class="status-icon">
-			{#if $estadoActual === 'sin_servicio'}
-			  <i class="fas fa-pause-circle"></i>
-			{:else if $estadoActual === 'en_servicio'}
-			  <i class="fas fa-sync-alt"></i>
-			{:else if $estadoActual === 'en_viaje_ureña'}
-			  <i class="fas fa-car-side"></i>
-			{:else if $estadoActual === 'en_viaje_colón'}
-			  <i class="fas fa-car-side"></i>
-			{:else if $estadoActual === 'viaje_finalizado'}
-			  <i class="fas fa-check-circle"></i>
-			{/if}
-		  </div>
-		  
-		  <div class="status-text">
-			{#if $estadoActual === 'sin_servicio'}
-			  <p>Servicio inactivo</p>
-			{:else if $estadoActual === 'en_servicio'}
-			  <p>En espera de viaje</p>
-			{:else if $estadoActual === 'en_viaje_ureña'}
-			  <p>En viaje a Ureña</p>
-			{:else if $estadoActual === 'en_viaje_colón'}
-			  <p>En viaje a Colón</p>
-			{:else if $estadoActual === 'viaje_finalizado'}
-			  <p>Viaje completado</p>
-			{/if}
-		  </div>
-		</div>
-  
-		<div class="timer-container" class:visible={$estadoActual.startsWith('en_viaje')}>
-		  <div class="timer">
-			<i class="fas fa-stopwatch"></i> Tiempo: {$tiempoTranscurrido} segundos
-		  </div>
-		</div>
-	  </div>
-  
-	  <div class="action-buttons">
-		{#if $estadoActual === 'sin_servicio'}
-		  <button on:click={iniciarServicio} class="action-btn start-btn">
-			<i class="fas fa-play"></i> Iniciar Servicio
-		  </button>
-		{:else if $estadoActual === 'en_servicio'}
-		  <div class="trip-buttons">
-			<button on:click={() => iniciarViaje('ureña')} class="action-btn trip-btn">
-			  <i class="fas fa-road"></i> Viaje a Ureña
-			</button>
-			<button on:click={() => iniciarViaje('colón')} class="action-btn trip-btn">
-			  <i class="fas fa-road"></i> Viaje a Colón
-			</button>
-		  </div>
-		{:else if $estadoActual.startsWith('en_viaje')}
-		  <button on:click={finalizarViaje} class="action-btn end-btn">
-			<i class="fas fa-flag-checkered"></i> Finalizar Viaje
-		  </button>
-		{:else if $estadoActual === 'viaje_finalizado'}
-		  <button on:click={iniciarServicio} class="action-btn restart-btn">
-			<i class="fas fa-redo"></i> Nuevo Servicio
-		  </button>
-		{/if}
-	  </div>
-	</div>
+    <div class="status-card">
+        <h1 class="title">🚕 Estado del Servicio de Taxi</h1>
+
+        <!-- Botones de estados previos al viaje -->
+        <button on:click={enParrilla} class="action-btn wait-btn">
+            <i class="fas fa-list"></i> 🚖 En Parrilla
+        </button>
+        <button on:click={surtiendoCombustible} class="action-btn fuel-btn">
+            <i class="fas fa-gas-pump"></i> ⛽ Surtiendo Combustible
+        </button>
+        <button on:click={llegandoDeSurtir} class="action-btn return-btn">
+            <i class="fas fa-arrow-circle-left"></i> 🔙 Llegando de Surtir
+        </button>
+
+        {#if $error}
+            <div class="error-message">{$error}</div>
+        {/if}
+
+        <div class="status-display {$estadoActual}">
+            <div class="status-icon">
+                {#if $estadoActual === 'sin_servicio'}
+                    <i class="fas fa-pause-circle"></i>
+                {:else if $estadoActual === 'en_servicio'}
+                    <i class="fas fa-sync-alt"></i>
+                {:else if $estadoActual === 'en_viaje_ureña' || $estadoActual === 'en_viaje_colón'}
+                    <i class="fas fa-car-side"></i>
+                {:else if $estadoActual === 'viaje_finalizado'}
+                    <i class="fas fa-check-circle"></i>
+                {/if}
+            </div>
+
+            <div class="status-text">
+                {#if $estadoActual === 'sin_servicio'}
+                    <p>Servicio inactivo</p>
+                {:else if $estadoActual === 'en_servicio'}
+                    <p>En espera de viaje</p>
+                {:else if $estadoActual === 'en_viaje_ureña'}
+                    <p>En viaje a Ureña</p>
+                {:else if $estadoActual === 'en_viaje_colón'}
+                    <p>En viaje a Colón</p>
+                {:else if $estadoActual === 'viaje_finalizado'}
+                    <p>Viaje completado</p>
+                {/if}
+            </div>
+        </div>
+
+        <div class="timer-container" class:visible={$estadoActual.startsWith('en_viaje')}>
+            <div class="timer">
+                <i class="fas fa-stopwatch"></i> Tiempo: {$tiempoTranscurrido}
+            </div>
+        </div>
+    </div>
+
+    <div class="action-buttons">
+      {#if $estadoActual === 'sin_servicio'}
+          <button on:click={iniciarServicio} class="action-btn start-btn">
+              <i class="fas fa-play"></i> Iniciar Servicio
+          </button>
+      {:else if $estadoActual === 'en_servicio' || $estadoActual === 'llegando_de_surtir' || $estadoActual === 'en_parrilla'}
+      <div class="trip-buttons">
+        <button 
+          on:click={() => iniciarViaje('ureña')} 
+          class="action-btn trip-btn" 
+          disabled={!['en_servicio', 'en_parrilla', 'llegando_de_surtir'].includes($estadoActual)}>
+          <i class="fas fa-road"></i> Viaje a Ureña
+        </button>
+        <button 
+          on:click={() => iniciarViaje('colón')} 
+          class="action-btn trip-btn" 
+          disabled={!['en_servicio', 'en_parrilla', 'llegando_de_surtir'].includes($estadoActual)}>
+          <i class="fas fa-road"></i> Viaje a Colón
+        </button>
+      </div>
+      {:else if $estadoActual === 'surtiendo_combustible'}
+          <!-- No se muestra la opción de viaje mientras se surte combustible -->
+      {:else if $estadoActual.startsWith('en_viaje')}
+          <button on:click={finalizarViaje} class="action-btn end-btn">
+              <i class="fas fa-flag-checkered"></i> Finalizar Viaje
+          </button>
+      {:else if $estadoActual === 'viaje_finalizado'}
+          <button on:click={iniciarServicio} class="action-btn restart-btn">
+              <i class="fas fa-redo"></i> Nuevo Servicio
+          </button>
+      {/if}
+    </div>
   </div>
+</div>
 
 <style>
-	.taxi-dashboard {
-  display: flex;
-  flex-direction: column;
-  min-height: 100vh;
-  background-color: #f8f9fa;
+  .taxi-dashboard {
   font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 20px;
+  background-color: #f5f5f5;
+  border-radius: 10px;
+  box-shadow: 0 0 20px rgba(0, 0, 0, 0.1);
 }
 
-/* Barra superior */
 .control-bar {
   display: flex;
-  justify-content: flex-end;
-  padding: 15px 25px;
-  background-color: #2c3e50;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+  justify-content: space-between;
+  margin-bottom: 20px;
 }
 
 .control-btn {
   padding: 10px 15px;
-  margin-left: 10px;
   border: none;
-  border-radius: 6px;
-  color: white;
-  font-weight: 600;
+  border-radius: 5px;
+  font-weight: bold;
   cursor: pointer;
-  transition: all 0.3s ease;
   display: flex;
   align-items: center;
   gap: 8px;
+  transition: all 0.3s ease;
   text-decoration: none;
 }
 
 .map-btn {
   background-color: #3498db;
+  color: white;
 }
 
 .map-btn:hover {
@@ -298,38 +329,31 @@
 }
 
 .passengers-btn {
-  background-color: #9b59b6;
+  background-color: #2ecc71;
+  color: white;
 }
 
 .passengers-btn:hover {
-  background-color: #8e44ad;
+  background-color: #27ae60;
 }
 
 .lock-btn {
-  background-color: #7f8c8d;
+  background-color: #e74c3c;
+  color: white;
 }
 
 .lock-btn:hover {
-  background-color: #95a5a6;
+  background-color: #c0392b;
 }
 
-/* Contenido principal */
 .main-content {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  flex-grow: 1;
-  padding: 30px;
+  background-color: white;
+  border-radius: 10px;
+  padding: 25px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
 }
 
 .status-card {
-  background-color: white;
-  border-radius: 12px;
-  padding: 30px;
-  width: 100%;
-  max-width: 500px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
   text-align: center;
   margin-bottom: 30px;
 }
@@ -343,84 +367,79 @@
 .status-display {
   padding: 25px;
   border-radius: 10px;
-  margin-bottom: 25px;
+  margin: 20px auto;
+  max-width: 300px;
   transition: all 0.3s ease;
 }
 
 .status-icon {
-  font-size: 60px;
+  font-size: 50px;
   margin-bottom: 15px;
 }
 
 .status-text {
   font-size: 20px;
-  font-weight: 600;
+  font-weight: bold;
 }
 
 .sin_servicio {
-  background-color: #fff3e0;
-  color: #e65100;
+  background-color: #f1c40f;
+  color: #7d6608;
 }
 
 .en_servicio {
-  background-color: #e3f2fd;
-  color: #0d47a1;
+  background-color: #2ecc71;
+  color: #0e5737;
 }
 
 .en_viaje_ureña, .en_viaje_colón {
-  background-color: #e8f5e9;
-  color: #1b5e20;
-  animation: pulse 2s infinite;
+  background-color: #3498db;
+  color: #1a5276;
 }
 
 .viaje_finalizado {
-  background-color: #efebe9;
-  color: #3e2723;
+  background-color: #9b59b6;
+  color: #4a235a;
 }
 
 .timer-container {
   margin-top: 20px;
   opacity: 0;
-  height: 0;
-  overflow: hidden;
-  transition: all 0.3s ease;
+  transition: opacity 0.3s ease;
 }
 
 .timer-container.visible {
   opacity: 1;
-  height: auto;
 }
 
 .timer {
+  background-color: #34495e;
+  color: white;
+  padding: 10px 15px;
+  border-radius: 5px;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 20px;
-  background-color: #37474f;
-  color: white;
-  border-radius: 30px;
-  font-weight: 600;
+  gap: 10px;
 }
 
-/* Botones de acción */
 .action-buttons {
   display: flex;
   justify-content: center;
-  width: 100%;
-  max-width: 500px;
+  margin-top: 20px;
 }
 
 .action-btn {
-  padding: 15px 25px;
+  padding: 12px 25px;
   border: none;
-  border-radius: 8px;
+  border-radius: 5px;
   font-size: 16px;
-  font-weight: 600;
+  font-weight: bold;
   cursor: pointer;
-  transition: all 0.3s ease;
   display: flex;
   align-items: center;
   gap: 10px;
+  transition: all 0.3s ease;
+  margin: 0 10px;
 }
 
 .start-btn {
@@ -430,24 +449,20 @@
 
 .start-btn:hover {
   background-color: #27ae60;
-  transform: translateY(-2px);
 }
 
 .trip-buttons {
   display: flex;
   gap: 15px;
-  width: 100%;
 }
 
 .trip-btn {
-  flex: 1;
   background-color: #3498db;
   color: white;
 }
 
 .trip-btn:hover {
   background-color: #2980b9;
-  transform: translateY(-2px);
 }
 
 .end-btn {
@@ -457,42 +472,70 @@
 
 .end-btn:hover {
   background-color: #c0392b;
-  transform: translateY(-2px);
 }
 
 .restart-btn {
-  background-color: #f39c12;
+  background-color: #9b59b6;
   color: white;
 }
 
 .restart-btn:hover {
+  background-color: #8e44ad;
+}
+
+.wait-btn {
+  background-color: #f39c12;
+  color: white;
+  margin-bottom: 15px;
+}
+
+.wait-btn:hover {
   background-color: #d35400;
-  transform: translateY(-2px);
+}
+
+.fuel-btn {
+  background-color: #e67e22;
+  color: white;
+  margin-bottom: 15px;
+}
+
+.fuel-btn:hover {
+  background-color: #d35400;
+}
+
+.return-btn {
+  background-color: #16a085;
+  color: white;
+  margin-bottom: 15px;
+}
+
+.return-btn:hover {
+  background-color: #1abc9c;
 }
 
 .error-message {
-  padding: 15px;
-  background-color: #ffebee;
-  color: #c62828;
-  border-radius: 6px;
-  margin-bottom: 20px;
-  font-weight: 600;
+  color: #e74c3c;
+  background-color: #fadbd8;
+  padding: 10px;
+  border-radius: 5px;
+  margin: 15px 0;
+  font-weight: bold;
 }
 
-@keyframes pulse {
-  0% {
-    box-shadow: 0 0 0 0 rgba(46, 204, 113, 0.4);
+@media (max-width: 600px) {
+  .control-bar {
+    flex-direction: column;
+    gap: 10px;
   }
-  70% {
-    box-shadow: 0 0 0 15px rgba(46, 204, 113, 0);
+  
+  .trip-buttons {
+    flex-direction: column;
   }
-  100% {
-    box-shadow: 0 0 0 0 rgba(46, 204, 113, 0);
+  
+  .action-btn {
+    width: 100%;
+    justify-content: center;
+    margin: 5px 0;
   }
-}
-
-/* Iconos de Font Awesome */
-.fas {
-  font-size: 18px;
 }
 </style>
