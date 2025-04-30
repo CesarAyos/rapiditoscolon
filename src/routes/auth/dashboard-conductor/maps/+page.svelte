@@ -3,7 +3,6 @@
 	import { writable } from 'svelte/store';
 	import { browser } from '$app/environment';
 	import { supabase } from '../../../../components/supabase';
-	import Lock from '../../../../components/lock.svelte';
 	import type { Session } from '@supabase/supabase-js';
 	import { protegerRuta } from '../../../../components/protegerRuta';
 
@@ -696,10 +695,7 @@
 					<span class="user-badge">Control: {conductorData.control}</span>
 					<span class="user-badge">{conductorData.propiedad}: {conductorData.nombre}</span>
 					<span class="user-badge">Placa: {conductorData.placa}</span>
-					<a href="/auth/dashboard-conductor/maps" class="user-badge">Mapa</a>
-					<a href="/auth/dashboard-conductor/maps/admin" class="user-badge">Admin</a>
-					<a href="/gestion" class="user-badge">Gestion</a>
-					<Lock />
+					
 				</div>
 			{:else}
 				<span class="user-name">No autenticado</span>

@@ -1,11 +1,13 @@
 <script>
 	import Carreras from '../../components/carreras.svelte';
 	import Estado from '../../components/estado.svelte';
-	import Lock from '../../components/lock.svelte';
 	import Pasajeromanual from '../../components/pasajeromanual.svelte';
 	import { protegerRuta } from '../../components/protegerRuta';
 	import { onMount } from 'svelte';
 	import Turnosasignados from '../../components/turnosasignados.svelte';
+	import UltimosUrena from '../../components/ultimosUrena.svelte';
+	import CombustibleControl from '../../components/CombustibleControl.svelte';
+	import Parrilla from '../../components/parrilla.svelte';
 
 	onMount(() => {
 		protegerRuta();
@@ -30,12 +32,6 @@
 		</button>
 	</div>
 
-	<!-- Componente Lock -->
-	<div class="card shadow-sm mb-4">
-		<div class="card-body">
-			<Lock />
-		</div>
-	</div>
 
 	<!-- Grid de componentes -->
 	<div class="row g-4">
@@ -84,6 +80,36 @@
 				</div>
 				<div class="card-body">
 					<Estado />
+				</div>
+			</div>
+		</div>
+		<div class="col-lg-6">
+			<div class="card h-100 shadow-sm">
+				<div class="card-header bg-primary text-white">
+					<h3 class="h5 mb-0">Estado del Sistema</h3>
+				</div>
+				<div class="card-body">
+					<UltimosUrena />
+				</div>
+			</div>
+		</div>
+		<div class="col-lg-6">
+			<div class="card h-100 shadow-sm">
+				<div class="card-header bg-primary text-white">
+					<h3 class="h5 mb-0">Estado del Sistema</h3>
+				</div>
+				<div class="card-body">
+					<CombustibleControl />
+				</div>
+			</div>
+		</div>
+		<div class="col-lg-6">
+			<div class="card h-100 shadow-sm">
+				<div class="card-header bg-primary text-white">
+					<h3 class="h5 mb-0">Estado del Sistema</h3>
+				</div>
+				<div class="card-body">
+					<Parrilla />
 				</div>
 			</div>
 		</div>

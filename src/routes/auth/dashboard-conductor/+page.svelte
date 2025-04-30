@@ -4,11 +4,8 @@
   import { supabase } from '../../../components/supabase';
   import { browser } from '$app/environment';
   import { DateTime } from 'luxon';
-	
+	import Navbar from '../../../components/navbar.svelte';
   
-	
-  
-
   type EstadoViaje =
     | 'sin_servicio'
     | 'en_servicio'
@@ -185,19 +182,7 @@
   });
 </script>
 
-
-
-
 <div class="taxi-dashboard">
-	<!-- Barra superior con botones -->
-	<div class="control-bar">
-		<a href="/auth/dashboard-conductor/maps" class="control-btn map-btn">
-			<i class="fas fa-map-marked-alt"></i> Mapa
-		</a>
-		<a href="/pasajeros" class="control-btn passengers-btn">
-			<i class="fas fa-users"></i> Pasajeros
-		</a>
-	</div>
 
 	<!-- Contenido centrado -->
 	<div class="main-content">
@@ -290,252 +275,80 @@
 </div>
 
 <style>
-  .taxi-dashboard {
-  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-  max-width: 800px;
-  margin: 0 auto;
-  padding: 20px;
-  background-color: #f5f5f5;
-  border-radius: 10px;
-  box-shadow: 0 0 20px rgba(0, 0, 0, 0.1);
-}
-
-.control-bar {
-  display: flex;
-  justify-content: space-between;
-  margin-bottom: 20px;
-}
-
-.control-btn {
-  padding: 10px 15px;
-  border: none;
-  border-radius: 5px;
-  font-weight: bold;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  transition: all 0.3s ease;
-  text-decoration: none;
-}
-
-.map-btn {
-  background-color: #3498db;
-  color: white;
-}
-
-.map-btn:hover {
-  background-color: #2980b9;
-}
-
-.passengers-btn {
-  background-color: #2ecc71;
-  color: white;
-}
-
-.passengers-btn:hover {
-  background-color: #27ae60;
-}
-
-.lock-btn {
-  background-color: #e74c3c;
-  color: white;
-}
-
-.lock-btn:hover {
-  background-color: #c0392b;
-}
-
-.main-content {
-  background-color: white;
-  border-radius: 10px;
-  padding: 25px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
-}
-
-.status-card {
-  text-align: center;
-  margin-bottom: 30px;
-}
-
-.title {
-  color: #2c3e50;
-  margin-bottom: 25px;
-  font-size: 24px;
-}
-
-.status-display {
-  padding: 25px;
-  border-radius: 10px;
-  margin: 20px auto;
-  max-width: 300px;
-  transition: all 0.3s ease;
-}
-
-.status-icon {
-  font-size: 50px;
-  margin-bottom: 15px;
-}
-
-.status-text {
-  font-size: 20px;
-  font-weight: bold;
-}
-
-.sin_servicio {
-  background-color: #f1c40f;
-  color: #7d6608;
-}
-
-.en_servicio {
-  background-color: #2ecc71;
-  color: #0e5737;
-}
-
-.en_viaje_ureña, .en_viaje_colón {
-  background-color: #3498db;
-  color: #1a5276;
-}
-
-.viaje_finalizado {
-  background-color: #9b59b6;
-  color: #4a235a;
-}
-
-.timer-container {
-  margin-top: 20px;
-  opacity: 0;
-  transition: opacity 0.3s ease;
-}
-
-.timer-container.visible {
-  opacity: 1;
-}
-
-.timer {
-  background-color: #34495e;
-  color: white;
-  padding: 10px 15px;
-  border-radius: 5px;
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.action-buttons {
-  display: flex;
-  justify-content: center;
-  margin-top: 20px;
-}
-
-.action-btn {
-  padding: 12px 25px;
-  border: none;
-  border-radius: 5px;
-  font-size: 16px;
-  font-weight: bold;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  transition: all 0.3s ease;
-  margin: 0 10px;
-}
-
-.start-btn {
-  background-color: #2ecc71;
-  color: white;
-}
-
-.start-btn:hover {
-  background-color: #27ae60;
-}
-
-.trip-buttons {
-  display: flex;
-  gap: 15px;
-}
-
-.trip-btn {
-  background-color: #3498db;
-  color: white;
-}
-
-.trip-btn:hover {
-  background-color: #2980b9;
-}
-
-.end-btn {
-  background-color: #e74c3c;
-  color: white;
-}
-
-.end-btn:hover {
-  background-color: #c0392b;
-}
-
-.restart-btn {
-  background-color: #9b59b6;
-  color: white;
-}
-
-.restart-btn:hover {
-  background-color: #8e44ad;
-}
-
-.wait-btn {
-  background-color: #f39c12;
-  color: white;
-  margin-bottom: 15px;
-}
-
-.wait-btn:hover {
-  background-color: #d35400;
-}
-
-.fuel-btn {
-  background-color: #e67e22;
-  color: white;
-  margin-bottom: 15px;
-}
-
-.fuel-btn:hover {
-  background-color: #d35400;
-}
-
-.return-btn {
-  background-color: #16a085;
-  color: white;
-  margin-bottom: 15px;
-}
-
-.return-btn:hover {
-  background-color: #1abc9c;
-}
-
-.error-message {
-  color: #e74c3c;
-  background-color: #fadbd8;
-  padding: 10px;
-  border-radius: 5px;
-  margin: 15px 0;
-  font-weight: bold;
-}
-
-@media (max-width: 600px) {
-  .control-bar {
-    flex-direction: column;
-    gap: 10px;
-  }
-  
-  .trip-buttons {
-    flex-direction: column;
-  }
-  
-  .action-btn {
-    width: 100%;
+  /* Estilos generales */
+.taxi-dashboard {
+    display: flex;
     justify-content: center;
-    margin: 5px 0;
-  }
+    align-items: center;
+    min-height: 50vh;
+    font-family: 'Poppins', sans-serif;
 }
+
+/* Tarjeta de estado */
+.status-card {
+    background: #fff;
+    padding: 2rem;
+    border-radius: 12px;
+    box-shadow: 0px 8px 20px rgba(0, 0, 0, 0.2);
+    text-align: center;
+    max-width: 400px;
+}
+
+/* Título */
+.title {
+    font-size: 1.8rem;
+    font-weight: bold;
+    color: #222;
+}
+
+/* Botones */
+.action-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    padding: 12px;
+    margin: 8px 0;
+    font-size: 1rem;
+    font-weight: bold;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.action-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0px 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+/* Colores de estados */
+.wait-btn { background: #FFC107; color: #222; }
+.fuel-btn { background: #007BFF; color: #fff; }
+.return-btn { background: #28A745; color: #fff; }
+.trip-btn { background: #FF5722; color: #fff; }
+.end-btn { background: #E91E63; color: #fff; }
+.restart-btn { background: #6C757D; color: #fff; }
+
+/* Contenedor de estado */
+.status-display {
+    margin-top: 16px;
+    padding: 20px;
+    border-radius: 10px;
+    color: #fff;
+    font-weight: bold;
+}
+
+.status-icon i {
+    font-size: 2.5rem;
+}
+
+/* Temporizador */
+.timer-container {
+    margin-top: 12px;
+    font-size: 1.2rem;
+    font-weight: bold;
+    color: #333;
+}
+
 </style>
