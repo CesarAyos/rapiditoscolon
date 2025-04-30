@@ -12,6 +12,8 @@
 	import UltimosUrena from '../../components/ultimosUrena.svelte';
 	import CombustibleControl from '../../components/CombustibleControl.svelte';
 	import Parrilla from '../../components/parrilla.svelte';
+	import Navbar from '../../components/navbar.svelte';
+	
 		
 
 	onMount(() => {
@@ -20,6 +22,10 @@
 </script>
 
 <ProtectedArea>
+
+	<div style="width: 100%;">
+		<Navbar />
+	</div>
 
 <div class="container-fluid p-4 bg-light min-vh-100">
 	<!-- Header -->

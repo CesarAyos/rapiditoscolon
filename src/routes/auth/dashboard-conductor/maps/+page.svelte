@@ -5,6 +5,8 @@
 	import { supabase } from '../../../../components/supabase';
 	import type { Session } from '@supabase/supabase-js';
 	import { protegerRuta } from '../../../../components/protegerRuta';
+	import Navbar from '../../../../components/navbar.svelte';
+	
 
 	type Conductor = {
 		id: number;
@@ -688,6 +690,7 @@
 </svelte:head>
 
 <div class="dashboard-container">
+	<Navbar />
 	<nav class="dashboard-nav">
 		<div class="nav-user">
 			{#if conductorData}

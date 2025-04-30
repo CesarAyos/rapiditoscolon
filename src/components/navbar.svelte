@@ -14,7 +14,7 @@
             <a class="nav-link active" aria-current="page" href="/auth/dashboard-conductor/maps">Mapa</a>
           </li>
           <li class="nav-item">
-            <a class="nav-link" href="/pasajeros">Pasajeros</a>
+            <a class="nav-link" href="/pasajeros">Central - Conductores</a>
           </li>
           <li class="nav-item">
             <a class="nav-link" href="/auth/dashboard-conductor/maps/admin">Monitoreo</a>

@@ -8,6 +8,8 @@
 	import UltimosUrena from '../../components/ultimosUrena.svelte';
 	import CombustibleControl from '../../components/CombustibleControl.svelte';
 	import Parrilla from '../../components/parrilla.svelte';
+	import Navbar from '../../components/navbar.svelte';
+	
 
 	onMount(() => {
 		protegerRuta();
@@ -15,6 +17,7 @@
 </script>
 
 <div class="container-fluid p-4 bg-light min-vh-100">
+	<Navbar />
 	<!-- Header -->
 	<header class="mb-5 text-center">
 		<h1 class="display-5 fw-bold text-primary">Panel de Control</h1>

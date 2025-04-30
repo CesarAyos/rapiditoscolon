@@ -7,6 +7,8 @@
 	import { protegerRuta } from '../../../../../components/protegerRuta';
 	import ProtectedArea from '../../../../../components/ProtectedArea.svelte';
 	import Lock from '../../../../../components/lock.svelte';
+	import Navbar from '../../../../../components/navbar.svelte';
+	
 
 	// Type Definitions
 	type Conductor = {
@@ -398,9 +400,10 @@
 </script>
 
 <ProtectedArea>
-	<div class="mb-2">
-		<Lock />
+	<div style="width: 100%;">
+		<Navbar />
 	</div>
+	
 	<div>
 		<button
 			on:click={() => window.location.reload()}

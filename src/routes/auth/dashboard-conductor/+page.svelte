@@ -4,7 +4,7 @@
   import { supabase } from '../../../components/supabase';
   import { browser } from '$app/environment';
   import { DateTime } from 'luxon';
-	import Navbar from '../../../components/navbar.svelte';
+ import Navbar from '../../../components/navbar.svelte';
   
   type EstadoViaje =
     | 'sin_servicio'
@@ -182,8 +182,13 @@
   });
 </script>
 
-<div class="taxi-dashboard">
+<div style="width: 100%;">
+    <Navbar />
+</div>
 
+
+<div class="taxi-dashboard">
+   
 	<!-- Contenido centrado -->
 	<div class="main-content">
     <div class="status-card">
@@ -280,7 +285,7 @@
     display: flex;
     justify-content: center;
     align-items: center;
-    min-height: 50vh;
+ 
     font-family: 'Poppins', sans-serif;
 }
 
